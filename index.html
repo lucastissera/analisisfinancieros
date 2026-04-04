@@ -8,73 +8,166 @@
   </head>
   <body>
     <main>
-      <h1>Análisis de FCI</h1>
-
-      <section class="card">
-        <h2>Lotes iniciales (antes del Excel)</h2>
-        <p class="hint">
-          Saldo previo a las operaciones del archivo: podés cargar varios lotes
-          con distinto valor unitario. En PEPS se consumen en el orden de esta
-          lista (el primero arriba es el más antiguo), antes que cualquier
-          suscripción del Excel importado.
-        </p>
-        <div id="lotesInicialesContainer" class="lotes-iniciales"></div>
-        <div class="actions">
-          <button type="button" class="btn-secondary" id="btnAgregarLoteInicial">
-            Agregar lote inicial
+      <div id="view-fci">
+        <header class="app-header">
+          <h1>Análisis de FCI</h1>
+          <button type="button" class="btn-secondary" id="btnIrCC">
+            Análisis Cuenta Comitente
           </button>
-        </div>
-        <p class="hint">
-          Fila 1 del Excel: títulos. Columna A: fecha; B: suscripción o rescate;
-          C: cuotas (en rescates, si el valor es positivo se interpreta como
-          salida de cuotas); D: monto en pesos.
-        </p>
-      </section>
+        </header>
 
-      <section class="card">
-        <h2>Archivo</h2>
-        <div class="actions">
-          <button type="button" class="btn-primary" id="btnImportar">
-            Importar Excel
-          </button>
-          <button type="button" class="btn-secondary" id="btnExportar" disabled>
-            Exportar procesado
-          </button>
-        </div>
-        <input
-          id="fileInput"
-          type="file"
-          accept=".xlsx,.xls,.csv"
-          hidden
-        />
-        <div id="errMsg" hidden></div>
-      </section>
+        <section class="card">
+          <h2>Lotes iniciales (antes del Excel)</h2>
+          <p class="hint">
+            Saldo previo a las operaciones del archivo: podés cargar varios lotes
+            con distinto valor unitario. En PEPS se consumen en el orden de esta
+            lista (el primero arriba es el más antiguo), antes que cualquier
+            suscripción del Excel importado.
+          </p>
+          <div id="lotesInicialesContainer" class="lotes-iniciales"></div>
+          <div class="actions">
+            <button type="button" class="btn-secondary" id="btnAgregarLoteInicial">
+              Agregar lote inicial
+            </button>
+          </div>
+          <p class="hint">
+            Fila 1 del Excel: títulos. Columna A: fecha; B: suscripción o rescate;
+            C: cuotas (en rescates, si el valor es positivo se interpreta como
+            salida de cuotas); D: monto en pesos.
+          </p>
+        </section>
 
-      <section class="card" id="panelResultados" hidden>
-        <h2>Resultados</h2>
-        <div class="results-grid">
-          <div class="result-item wide">
-            <div class="label">1) Resultado del ejercicio</div>
-            <div class="valor" id="resEjercicio">—</div>
+        <section class="card">
+          <h2>Archivo</h2>
+          <div class="actions">
+            <button type="button" class="btn-primary" id="btnImportar">
+              Importar Excel
+            </button>
+            <button type="button" class="btn-secondary" id="btnExportar" disabled>
+              Exportar procesado
+            </button>
           </div>
-          <div class="result-item">
-            <div class="label">2) Cuotas parte al cierre</div>
-            <div class="valor" id="resCuotas">—</div>
+          <input
+            id="fileInput"
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            hidden
+          />
+          <div id="errMsg" hidden></div>
+        </section>
+
+        <section class="card" id="panelResultados" hidden>
+          <h2>Resultados</h2>
+          <div class="results-grid">
+            <div class="result-item wide">
+              <div class="label">1) Resultado del ejercicio</div>
+              <div class="valor" id="resEjercicio">—</div>
+            </div>
+            <div class="result-item">
+              <div class="label">2) Cuotas parte al cierre</div>
+              <div class="valor" id="resCuotas">—</div>
+            </div>
+            <div class="result-item">
+              <div class="label">3) Valor unitario (costo PEPS)</div>
+              <div class="valor" id="resVU">—</div>
+            </div>
           </div>
-          <div class="result-item">
-            <div class="label">3) Valor unitario (costo PEPS)</div>
-            <div class="valor" id="resVU">—</div>
+          <p class="hint">
+            El resultado del ejercicio suma las diferencias entre el monto de cada
+            rescate y el costo de las cuotas dadas de baja por PEPS. El valor
+            unitario al cierre es el costo remanente dividido por las cuotas
+            restantes.
+          </p>
+        </section>
+      </div>
+
+      <div id="view-cc" hidden>
+        <header class="app-header">
+          <h1>Análisis de Cuenta Comitente</h1>
+          <button type="button" class="btn-secondary" id="btnVolverFCI">
+            ← Volver a FCI
+          </button>
+        </header>
+
+        <section class="card">
+          <h2>Tenencias iniciales (PEPS antes del período)</h2>
+          <p class="hint">
+            Cargá manualmente cada lote (ticker, cantidad, precio unitario de costo)
+            en orden PEPS (arriba el más antiguo), o importá un Excel con fila 1 de
+            títulos: A Ticker, B Cantidad, C Precio unitario. Esto debe estar listo
+            antes de importar los movimientos del período.
+          </p>
+          <div id="ccTenenciasContainer" class="lotes-iniciales"></div>
+          <div class="actions">
+            <button type="button" class="btn-secondary" id="btnAgregarTenenciaCC">
+              Agregar tenencia
+            </button>
+            <button type="button" class="btn-secondary" id="btnImportarTenenciasCC">
+              Importar Excel tenencias
+            </button>
           </div>
-        </div>
-        <p class="hint">
-          El resultado del ejercicio suma las diferencias entre el monto de cada
-          rescate y el costo de las cuotas dadas de baja por PEPS. El valor
-          unitario al cierre es el costo remanente dividido por las cuotas
-          restantes.
-        </p>
-      </section>
+          <input
+            id="fileTenenciasCC"
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            hidden
+          />
+        </section>
+
+        <section class="card">
+          <h2>Movimientos del período</h2>
+          <p class="hint">
+            Fila 1: A Fecha concertación, B Descripción, C Ticker, D Tipo instrumento,
+            E Cantidad, F Precio, G Fecha liquidación (opcional), H Moneda,
+            I Importe. Sin ticker, se clasifica por palabras en Descripción (Cobro,
+            Pago, APCOLFUT, APCOLCON).
+          </p>
+          <div class="actions">
+            <button type="button" class="btn-primary" id="btnImportarMovsCC">
+              Importar Excel movimientos
+            </button>
+            <button type="button" class="btn-secondary" id="btnExportarCC" disabled>
+              Exportar procesado
+            </button>
+          </div>
+          <input
+            id="fileMovsCC"
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            hidden
+          />
+          <div id="ccErrMsg" hidden></div>
+        </section>
+
+        <section class="card" id="ccPanelResultados" hidden>
+          <h2>Resultados</h2>
+          <div class="results-grid cc-results">
+            <div class="result-item wide">
+              <div class="label">Ingresos de Dinero en la Cuenta</div>
+              <div class="valor" id="ccIngresos">—</div>
+            </div>
+            <div class="result-item wide">
+              <div class="label">Salidas de Dinero en la Cuenta</div>
+              <div class="valor" id="ccSalidas">—</div>
+            </div>
+            <div class="result-item">
+              <div class="label">Suscripción Caución Colocadora</div>
+              <div class="valor" id="ccApcolfut">—</div>
+            </div>
+            <div class="result-item">
+              <div class="label">Rescate Caución Colocadora</div>
+              <div class="valor" id="ccApcolcon">—</div>
+            </div>
+            <div class="result-item wide">
+              <div class="label">Resultado ejercicio (ventas vs costo PEPS)</div>
+              <div class="valor" id="ccResEjercicio">—</div>
+            </div>
+          </div>
+        </section>
+      </div>
     </main>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <script type="module" src="./app.js"></script>
+    <script type="module" src="./cc-app.js"></script>
   </body>
 </html>
