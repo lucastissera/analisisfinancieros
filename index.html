@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Análisis de FCI</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Análisis de FCI</h1>
+
+      <section class="card">
+        <h2>Posición inicial</h2>
+        <div class="row">
+          <div class="field">
+            <label for="cuotasInicial">Cuotas parte iniciales</label>
+            <input
+              id="cuotasInicial"
+              type="number"
+              inputmode="decimal"
+              min="0"
+              step="any"
+              value="0"
+            />
+          </div>
+          <div class="field">
+            <label for="valorUnitarioInicial">Valor unitario inicial ($)</label>
+            <input
+              id="valorUnitarioInicial"
+              type="number"
+              inputmode="decimal"
+              min="0"
+              step="any"
+              value="0"
+            />
+          </div>
+        </div>
+        <p class="hint">
+          Fila 1 del Excel: títulos. Columna A: fecha; B: suscripción o rescate;
+          C: cuotas (en rescates, si el valor es positivo se interpreta como
+          salida de cuotas); D: monto en pesos.
+        </p>
+      </section>
+
+      <section class="card">
+        <h2>Archivo</h2>
+        <div class="actions">
+          <button type="button" class="btn-primary" id="btnImportar">
+            Importar Excel
+          </button>
+          <button type="button" class="btn-secondary" id="btnExportar" disabled>
+            Exportar procesado
+          </button>
+        </div>
+        <input
+          id="fileInput"
+          type="file"
+          accept=".xlsx,.xls,.csv"
+          hidden
+        />
+        <div id="errMsg" hidden></div>
+      </section>
+
+      <section class="card" id="panelResultados" hidden>
+        <h2>Resultados</h2>
+        <div class="results-grid">
+          <div class="result-item wide">
+            <div class="label">1) Resultado del ejercicio</div>
+            <div class="valor" id="resEjercicio">—</div>
+          </div>
+          <div class="result-item">
+            <div class="label">2) Cuotas parte al cierre</div>
+            <div class="valor" id="resCuotas">—</div>
+          </div>
+          <div class="result-item">
+            <div class="label">3) Valor unitario (costo PEPS)</div>
+            <div class="valor" id="resVU">—</div>
+          </div>
+        </div>
+        <p class="hint">
+          El resultado del ejercicio suma las diferencias entre el monto de cada
+          rescate y el costo de las cuotas dadas de baja por PEPS. El valor
+          unitario al cierre es el costo remanente dividido por las cuotas
+          restantes.
+        </p>
+      </section>
+    </main>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
