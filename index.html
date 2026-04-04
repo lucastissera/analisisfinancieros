@@ -8,41 +8,6 @@
   </head>
   <body>
     <main>
-      <div id="view-login" class="login-screen">
-        <div class="card login-card">
-          <h1>Acceso</h1>
-          <p class="hint">
-            Ingresá con usuario y contraseña para continuar al análisis de FCI o
-            cuenta comitente.
-          </p>
-          <form id="loginForm">
-            <div class="field">
-              <label for="loginUser">Usuario</label>
-              <input
-                id="loginUser"
-                name="username"
-                type="text"
-                autocomplete="username"
-              />
-            </div>
-            <div class="field">
-              <label for="loginPass">Contraseña</label>
-              <input
-                id="loginPass"
-                name="password"
-                type="password"
-                autocomplete="current-password"
-              />
-            </div>
-            <button type="submit" class="btn-primary" id="btnLogin">
-              Ingresar
-            </button>
-          </form>
-          <div id="loginErr" class="login-err" hidden></div>
-        </div>
-      </div>
-
-      <div id="view-app" hidden>
       <div id="view-fci">
         <header class="app-header">
           <h1>Análisis de FCI</h1>
@@ -210,11 +175,9 @@
           </div>
         </section>
       </div>
-      </div>
     </main>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <script type="module" src="./app.js"></script>
     <script type="module" src="./cc-app.js"></script>
-    <script src="./login-app.js"></script>
   </body>
 </html>
