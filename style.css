@@ -30,6 +30,38 @@ main {
   padding: 2rem 1.25rem 3rem;
 }
 
+.login-screen {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  min-height: 60vh;
+  padding-top: 1rem;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 400px;
+}
+
+.login-card h1 {
+  margin-bottom: 0.5rem;
+}
+
+.login-card .btn-primary {
+  width: 100%;
+  margin-top: 0.5rem;
+}
+
+.login-err {
+  margin-top: 0.85rem;
+  padding: 0.65rem 0.85rem;
+  background: rgba(248, 113, 113, 0.12);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  border-radius: 8px;
+  color: #fecaca;
+  font-size: 0.9rem;
+}
+
 h1 {
   font-size: 1.75rem;
   font-weight: 600;
