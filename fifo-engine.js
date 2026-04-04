@@ -32,19 +32,57 @@ function normalizeMonto(montoRaw) {
 }
 
 /**
- * @param {{ cuotas: number, valorUnitario: number }} inicial
+ * @param {{ lotesIniciales: Array<{ fecha: Date, cuotas: number, valorUnitario: number }> }} inicial
+ *   Lotes en orden de antigüedad PEPS: el primero se consume antes que el segundo, y todos antes que suscripciones del Excel.
  * @param {Array<{ fecha: Date, tipo: string, cuotas: number, monto: number }>} operaciones — ordenadas por fecha ascendente
  */
 export function procesarPEPS(inicial, operaciones) {
+  /** Cola PEPS: { lotId, qty, totalCost } */
   const lots = [];
-  const cuotas0 = Number(inicial.cuotas);
-  const vu0 = Number(inicial.valorUnitario);
-  if (cuotas0 > 0 && vu0 >= 0) {
-    lots.push({ qty: cuotas0, totalCost: cuotas0 * vu0 });
+  /** lotId -> metadatos al crear el lote */
+  const lotMetaById = new Map();
+  /** lotId -> fracciones de rescates que consumen ese lote (orden cronológico al agregar) */
+  const rescatesPorLote = new Map();
+
+  let nextLotId = 0;
+
+  function crearLote(qty, totalCost, meta) {
+    const lotId = nextLotId++;
+    lots.push({ lotId, qty, totalCost });
+    lotMetaById.set(lotId, {
+      ...meta,
+      cuotasInicial: qty,
+      costoInicial: totalCost,
+    });
+    return lotId;
+  }
+
+  const lotesIni = Array.isArray(inicial?.lotesIniciales)
+    ? inicial.lotesIniciales
+    : [];
+  for (let i = 0; i < lotesIni.length; i++) {
+    const li = lotesIni[i];
+    const cuotas = Number(li.cuotas);
+    const vu = Number(li.valorUnitario);
+    if (!Number.isFinite(cuotas) || cuotas <= 0) continue;
+    if (!Number.isFinite(vu) || vu < 0) {
+      throw new Error(
+        `Lote inicial #${i + 1}: valor unitario inválido (debe ser ≥ 0).`
+      );
+    }
+    const fd = li.fecha;
+    if (!fd || !(fd instanceof Date) || Number.isNaN(fd.getTime())) {
+      throw new Error(`Lote inicial #${i + 1}: fecha inválida.`);
+    }
+    crearLote(cuotas, cuotas * vu, {
+      fecha: fd,
+      origen: "inicial",
+      filaExcel: null,
+      ordenInicial: i,
+    });
   }
 
   let resultadoEjercicio = 0;
-  const detalle = [];
 
   for (let i = 0; i < operaciones.length; i++) {
     const op = operaciones[i];
@@ -59,14 +97,10 @@ export function procesarPEPS(inicial, operaciones) {
       if (monto < 0) {
         throw new Error(`Fila ${fila} (Excel): suscripción con monto inválido.`);
       }
-      lots.push({ qty, totalCost: monto });
-      detalle.push({
+      crearLote(qty, monto, {
         fecha: op.fecha,
-        tipo: "Suscripción",
-        cuotas: qty,
-        monto,
-        costoAsignado: monto,
-        resultadoParcial: 0,
+        origen: "suscripcion",
+        filaExcel: fila,
       });
       continue;
     }
@@ -79,16 +113,31 @@ export function procesarPEPS(inicial, operaciones) {
       }
 
       let remaining = qtyToSell;
-      let costBasis = 0;
 
       while (remaining > 1e-9 && lots.length > 0) {
         const lot = lots[0];
         const take = Math.min(lot.qty, remaining);
-        const fraction = take / lot.qty;
-        const costFromLot = lot.totalCost * fraction;
+        const costFromLot = lot.totalCost * (take / lot.qty);
+        const proceedsChunk = proceeds * (take / qtyToSell);
+        const realizadoChunk = proceedsChunk - costFromLot;
+
+        resultadoEjercicio += realizadoChunk;
+
         lot.qty -= take;
         lot.totalCost -= costFromLot;
-        costBasis += costFromLot;
+        const saldoLote = lot.qty < 1e-9 ? 0 : lot.qty;
+
+        if (!rescatesPorLote.has(lot.lotId)) rescatesPorLote.set(lot.lotId, []);
+        rescatesPorLote.get(lot.lotId).push({
+          fecha: op.fecha,
+          filaExcel: fila,
+          cuotasParte: take,
+          monto: proceedsChunk,
+          costoPeps: costFromLot,
+          resultadoParcial: realizadoChunk,
+          saldoCuotasParte: saldoLote,
+        });
+
         remaining -= take;
         if (lot.qty < 1e-9) lots.shift();
       }
@@ -98,17 +147,6 @@ export function procesarPEPS(inicial, operaciones) {
           `Fila ${fila} (Excel): rescate de ${qtyToSell} cuotas supera las disponibles en cartera (PEPS).`
         );
       }
-
-      const realizado = proceeds - costBasis;
-      resultadoEjercicio += realizado;
-      detalle.push({
-        fecha: op.fecha,
-        tipo: "Rescate",
-        cuotas: -qtyToSell,
-        monto: proceeds,
-        costoAsignado: costBasis,
-        resultadoParcial: realizado,
-      });
     }
   }
 
@@ -116,14 +154,85 @@ export function procesarPEPS(inicial, operaciones) {
   const costoCierre = lots.reduce((s, l) => s + l.totalCost, 0);
   const valorUnitarioCierre = cuotasCierre > 1e-9 ? costoCierre / cuotasCierre : 0;
 
+  const detallePepsPorLote = construirDetallePepsPorLote(
+    lotMetaById,
+    rescatesPorLote
+  );
+
+  const lotesPendientes = construirLotesPendientes(lots, lotMetaById);
+
   return {
     resultadoEjercicio,
     cuotasCierre,
     valorUnitarioCierre,
     costoRemanente: costoCierre,
-    detalle,
+    detallePepsPorLote,
+    lotesPendientes,
     lots,
   };
+}
+
+/**
+ * Lotes con saldo al cierre (orden PEPS), para exportar como próximos lotes iniciales.
+ */
+function construirLotesPendientes(lotsCola, lotMetaById) {
+  return lotsCola.map((l) => {
+    const meta = lotMetaById.get(l.lotId);
+    const vu =
+      l.qty > 1e-12 ? l.totalCost / l.qty : 0;
+    return {
+      fecha: meta?.fecha ?? null,
+      cuotasParte: l.qty,
+      valorUnitario: vu,
+      costoRemanente: l.totalCost,
+      origen: meta?.origen ?? "suscripcion",
+    };
+  });
+}
+
+/**
+ * Orden: por cada lote en orden de creación (PEPS), fila de alta del lote y debajo los rescates que consumen ese lote.
+ */
+function construirDetallePepsPorLote(lotMetaById, rescatesPorLote) {
+  const ids = [...lotMetaById.keys()].sort((a, b) => a - b);
+  const filas = [];
+
+  for (const lotId of ids) {
+    const meta = lotMetaById.get(lotId);
+    const esInicial = meta.origen === "inicial";
+    filas.push({
+      fecha: meta.fecha,
+      tipo: esInicial ? "Lote inicial" : "Suscripción",
+      cuotasParte: meta.cuotasInicial,
+      monto: meta.costoInicial,
+      costoPeps: meta.costoInicial,
+      resultadoParcial: 0,
+      saldoCuotasParte: meta.cuotasInicial,
+    });
+
+    const chunks = rescatesPorLote.get(lotId);
+    if (!chunks?.length) continue;
+
+    chunks.sort((a, b) => {
+      const t = a.fecha - b.fecha;
+      if (t !== 0) return t;
+      return (a.filaExcel ?? 0) - (b.filaExcel ?? 0);
+    });
+
+    for (const ch of chunks) {
+      filas.push({
+        fecha: ch.fecha,
+        tipo: "Rescate",
+        cuotasParte: ch.cuotasParte,
+        monto: ch.monto,
+        costoPeps: ch.costoPeps,
+        resultadoParcial: ch.resultadoParcial,
+        saldoCuotasParte: ch.saldoCuotasParte,
+      });
+    }
+  }
+
+  return filas;
 }
 
 /**

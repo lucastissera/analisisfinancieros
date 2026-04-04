@@ -15,8 +15,99 @@ function fmtNum(n, dec = 4) {
 }
 
 function fmtFecha(d) {
-  if (!d || !(d instanceof Date)) return "";
+  if (d == null) return "—";
+  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return "—";
   return d.toLocaleDateString("es-AR");
+}
+
+function parseNumLocal(v) {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  const s = String(v).trim();
+  if (s === "") return null;
+  let t = s.replace(/\s/g, "");
+  if (t.includes(",") && t.includes(".")) {
+    const li = t.lastIndexOf(",");
+    const ld = t.lastIndexOf(".");
+    if (li > ld) t = t.replace(/\./g, "").replace(",", ".");
+    else t = t.replace(/,/g, "");
+  } else if (t.includes(",")) t = t.replace(",", ".");
+  const n = parseFloat(t);
+  return Number.isFinite(n) ? n : null;
+}
+
+function crearFilaLoteInicial() {
+  const wrap = document.createElement("div");
+  wrap.className = "lote-inicial-row";
+  wrap.innerHTML = `
+    <div class="field">
+      <label>Fecha</label>
+      <input type="date" data-field="fecha" />
+    </div>
+    <div class="field">
+      <label>Cuotas parte</label>
+      <input type="number" data-field="cuotas" inputmode="decimal" min="0" step="any" placeholder="0" />
+    </div>
+    <div class="field">
+      <label>Valor unitario ($)</label>
+      <input type="number" data-field="vu" inputmode="decimal" min="0" step="any" placeholder="0" />
+    </div>
+    <div class="lote-remove-wrap">
+      <button type="button" class="btn-remove-lote" title="Quitar lote" data-action="remove-lote">×</button>
+    </div>
+  `;
+  return wrap;
+}
+
+function contarFilasLotes() {
+  return document.querySelectorAll("#lotesInicialesContainer .lote-inicial-row")
+    .length;
+}
+
+function agregarFilaLoteInicial() {
+  $("lotesInicialesContainer").appendChild(crearFilaLoteInicial());
+}
+
+function initLotesIniciales() {
+  const c = $("lotesInicialesContainer");
+  c.innerHTML = "";
+  agregarFilaLoteInicial();
+}
+
+function leerLotesIniciales() {
+  const rows = document.querySelectorAll(
+    "#lotesInicialesContainer .lote-inicial-row"
+  );
+  const lotes = [];
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const fechaVal = row.querySelector('[data-field="fecha"]')?.value?.trim();
+    const cuotas = parseNumLocal(row.querySelector('[data-field="cuotas"]')?.value);
+    const vu = parseNumLocal(row.querySelector('[data-field="vu"]')?.value);
+
+    const vacio =
+      !fechaVal &&
+      (cuotas == null || cuotas <= 0) &&
+      (vu == null || vu <= 0);
+    if (vacio) continue;
+
+    const n = i + 1;
+    if (!fechaVal) {
+      throw new Error(`Lote inicial #${n}: indicá la fecha o vaciá la fila.`);
+    }
+    if (cuotas == null || cuotas <= 0) {
+      throw new Error(`Lote inicial #${n}: cuotas parte debe ser mayor que 0.`);
+    }
+    if (vu == null || vu < 0) {
+      throw new Error(`Lote inicial #${n}: valor unitario inválido (≥ 0).`);
+    }
+    const d = new Date(`${fechaVal}T12:00:00`);
+    if (Number.isNaN(d.getTime())) {
+      throw new Error(`Lote inicial #${n}: fecha inválida.`);
+    }
+    lotes.push({ fecha: d, cuotas, valorUnitario: vu });
+  }
+  return lotes;
 }
 
 function mostrarError(msg) {
@@ -64,18 +155,21 @@ function exportarExcel(resultado, operacionesOriginales) {
   const cabDetalle = [
     "Fecha",
     "Tipo",
-    "Cuotas (ajuste)",
+    "Cuotas parte",
     "Monto",
     "Costo PEPS asignado",
     "Resultado parcial",
+    "Saldo cuotas parte (lote)",
   ];
-  const filasDet = resultado.detalle.map((d) => [
+  const det = resultado.detallePepsPorLote || [];
+  const filasDet = det.map((d) => [
     fmtFecha(d.fecha),
     d.tipo,
-    d.cuotas,
+    d.cuotasParte,
     d.monto,
-    d.costoAsignado,
+    d.costoPeps,
     d.resultadoParcial,
+    d.saldoCuotasParte,
   ]);
 
   const cabOps = ["Fecha", "Tipo", "Cuotas", "Monto"];
@@ -86,32 +180,60 @@ function exportarExcel(resultado, operacionesOriginales) {
     o.monto,
   ]);
 
+  const pend = resultado.lotesPendientes || [];
+  const cabPend = [
+    "Fecha suscripción / lote",
+    "Cuotas parte restantes",
+    "Valor unitario (PEPS)",
+    "Costo remanente",
+    "Origen",
+  ];
+  const filasPend = pend.map((p) => [
+    fmtFecha(p.fecha),
+    p.cuotasParte,
+    p.valorUnitario,
+    p.costoRemanente,
+    p.origen === "inicial" ? "Lote inicial" : "Suscripción (Excel)",
+  ]);
+
+  const notaPend = [
+    [],
+    [
+      "Usá estas filas como lotes iniciales en el próximo análisis (mismo orden: primero = más antiguo en PEPS).",
+    ],
+  ];
+
   const wsRes = XLSX.utils.aoa_to_sheet(resumen);
   const wsDet = XLSX.utils.aoa_to_sheet([cabDetalle, ...filasDet]);
   const wsOps = XLSX.utils.aoa_to_sheet([cabOps, ...filasOps]);
+  const wsPend = XLSX.utils.aoa_to_sheet([
+    ["Lotes pendientes sin rescatar (saldo al cierre)"],
+    [],
+    cabPend,
+    ...filasPend,
+    ...notaPend,
+  ]);
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, wsRes, "Resumen");
   XLSX.utils.book_append_sheet(wb, wsDet, "Detalle PEPS");
+  XLSX.utils.book_append_sheet(wb, wsPend, "Lotes pendientes");
   XLSX.utils.book_append_sheet(wb, wsOps, "Operaciones");
 
   XLSX.writeFile(wb, ultimoNombreArchivo.replace(/\.[^.]+$/, "") + "_procesado.xlsx");
 }
 
 function ejecutarAnalisis(filasExcel) {
-  const cuotasIni = Number($("cuotasInicial").value);
-  const vuIni = Number($("valorUnitarioInicial").value);
-
-  if (!Number.isFinite(cuotasIni) || cuotasIni < 0) {
-    mostrarError("Ingrese un número válido de cuotas iniciales (≥ 0).");
-    return;
-  }
-  if (!Number.isFinite(vuIni) || vuIni < 0) {
-    mostrarError("Ingrese un valor unitario inicial válido (≥ 0).");
-    return;
-  }
-
   mostrarError("");
+
+  let lotesIniciales;
+  try {
+    lotesIniciales = leerLotesIniciales();
+  } catch (e) {
+    mostrarError(e.message || String(e));
+    $("panelResultados").hidden = true;
+    return;
+  }
 
   let operaciones;
   try {
@@ -131,10 +253,7 @@ function ejecutarAnalisis(filasExcel) {
 
   let resultado;
   try {
-    resultado = procesarPEPS(
-      { cuotas: cuotasIni, valorUnitario: vuIni },
-      operaciones
-    );
+    resultado = procesarPEPS({ lotesIniciales }, operaciones);
   } catch (e) {
     mostrarError(e.message || String(e));
     $("panelResultados").hidden = true;
@@ -182,13 +301,30 @@ $("btnExportar").addEventListener("click", () => {
   exportarExcel(ultimoResultado.resultado, ultimoResultado.operaciones);
 });
 
+$("btnAgregarLoteInicial").addEventListener("click", () => {
+  agregarFilaLoteInicial();
+});
+
+$("lotesInicialesContainer").addEventListener("click", (ev) => {
+  const btn = ev.target.closest("[data-action=remove-lote]");
+  if (!btn) return;
+  const row = btn.closest(".lote-inicial-row");
+  if (!row) return;
+  if (contarFilasLotes() <= 1) {
+    row.querySelectorAll("input").forEach((inp) => {
+      inp.value = "";
+    });
+    return;
+  }
+  row.remove();
+});
+
+$("lotesInicialesContainer").addEventListener("change", reintentarSiHayDatos);
+
 function reintentarSiHayDatos() {
   if (ultimasFilasExcel != null) {
     ejecutarAnalisis(ultimasFilasExcel);
   }
 }
 
-["cuotasInicial", "valorUnitarioInicial"].forEach((id) => {
-  $(id).addEventListener("input", reintentarSiHayDatos);
-  $(id).addEventListener("change", reintentarSiHayDatos);
-});
+initLotesIniciales();

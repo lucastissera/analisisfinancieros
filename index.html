@@ -11,30 +11,18 @@
       <h1>Análisis de FCI</h1>
 
       <section class="card">
-        <h2>Posición inicial</h2>
-        <div class="row">
-          <div class="field">
-            <label for="cuotasInicial">Cuotas parte iniciales</label>
-            <input
-              id="cuotasInicial"
-              type="number"
-              inputmode="decimal"
-              min="0"
-              step="any"
-              value="0"
-            />
-          </div>
-          <div class="field">
-            <label for="valorUnitarioInicial">Valor unitario inicial ($)</label>
-            <input
-              id="valorUnitarioInicial"
-              type="number"
-              inputmode="decimal"
-              min="0"
-              step="any"
-              value="0"
-            />
-          </div>
+        <h2>Lotes iniciales (antes del Excel)</h2>
+        <p class="hint">
+          Saldo previo a las operaciones del archivo: podés cargar varios lotes
+          con distinto valor unitario. En PEPS se consumen en el orden de esta
+          lista (el primero arriba es el más antiguo), antes que cualquier
+          suscripción del Excel importado.
+        </p>
+        <div id="lotesInicialesContainer" class="lotes-iniciales"></div>
+        <div class="actions">
+          <button type="button" class="btn-secondary" id="btnAgregarLoteInicial">
+            Agregar lote inicial
+          </button>
         </div>
         <p class="hint">
           Fila 1 del Excel: títulos. Columna A: fecha; B: suscripción o rescate;
