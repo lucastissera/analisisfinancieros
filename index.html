@@ -122,7 +122,9 @@
             I Importe. Sin ticker, se clasifica por palabras en Descripción (Cobro,
             Pago, APCOLFUT, APCOLCON). Con ticker y cantidad 0, si la descripción
             indica Renta, Dividendo en efectivo o Renta y Amortización, se suma el
-            importe como ingreso por título sin afectar PEPS.
+            importe como ingreso por título sin afectar PEPS. Si en D el tipo de
+            instrumento es «Corporativos», la fila no entra al PEPS (se verá en el
+            detalle como excluida; ajuste aparte).
           </p>
           <div class="actions">
             <button type="button" class="btn-primary" id="btnImportarMovsCC">

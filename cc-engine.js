@@ -59,6 +59,12 @@ export function esIngresoTituloSinPeps(descripcion) {
   return false;
 }
 
+/** Tipo de instrumento (columna D) = Corporativos: fuera del PEPS en este análisis. */
+export function esTipoCorporativos(tipoInstrumento) {
+  const t = normalizarDescUpper(String(tipoInstrumento ?? "").trim());
+  return t === "CORPORATIVOS";
+}
+
 /**
  * Excel tenencias: fila 1 títulos. A=Ticker, B=Cantidad, C=Precio unitario (costo PEPS).
  */
@@ -128,9 +134,14 @@ export function parsearMovimientosExcel(filas) {
     const cantidadCero =
       cantidad == null || Math.abs(Number(cantidad) || 0) < 1e-9;
 
-    if (ticker && cantidadCero && !esIngresoTituloSinPeps(descripcion)) {
+    if (
+      ticker &&
+      cantidadCero &&
+      !esIngresoTituloSinPeps(descripcion) &&
+      !esTipoCorporativos(tipoInstrumento)
+    ) {
       throw new Error(
-        `Movimientos fila ${r + 2}: con Ticker (C) y cantidad 0 (E), la descripción debe indicar Renta, Dividendo en efectivo o Renta y Amortización (ingresos sin PEPS).`
+        `Movimientos fila ${r + 2}: con Ticker (C) y cantidad 0 (E), la descripción debe indicar Renta, Dividendo en efectivo o Renta y Amortización (ingresos sin PEPS), salvo Tipo instrumento Corporativos (excluido de PEPS).`
       );
     }
 
@@ -231,6 +242,15 @@ export function procesarCuentaComitente(tenenciasLotes, movimientos) {
       detalleMovs.push({
         ...m,
         tipoLinea: tipo || "sin_clasificar",
+        peps: null,
+      });
+      continue;
+    }
+
+    if (esTipoCorporativos(m.tipoInstrumento)) {
+      detalleMovs.push({
+        ...m,
+        tipoLinea: "corporativos_excluido_peps",
         peps: null,
       });
       continue;
