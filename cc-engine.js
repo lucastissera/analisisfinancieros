@@ -40,6 +40,25 @@ function excelDateToDate(v) {
   return null;
 }
 
+function normalizarDescUpper(s) {
+  return String(s || "")
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+/**
+ * Rentas, dividendos o amortización sobre el título: cantidad 0, no afecta PEPS.
+ * Reconoce: "Renta", "Dividendo en efectivo", "Renta y Amortización".
+ */
+export function esIngresoTituloSinPeps(descripcion) {
+  const d = normalizarDescUpper(descripcion);
+  if (d.includes("DIVIDENDO EN EFECTIVO")) return true;
+  if (d.includes("RENTA Y AMORTIZACION")) return true;
+  if (d.includes("RENTA")) return true;
+  return false;
+}
+
 /**
  * Excel tenencias: fila 1 títulos. A=Ticker, B=Cantidad, C=Precio unitario (costo PEPS).
  */
@@ -106,12 +125,13 @@ export function parsearMovimientosExcel(filas) {
     const moneda = row.H ?? row[7];
     const importe = parseNumAR(row.I ?? row[8]);
 
-    if (ticker) {
-      if (cantidad == null || cantidad === 0) {
-        throw new Error(
-          `Movimientos fila ${r + 2}: con Ticker (C) debe informarse cantidad (E).`
-        );
-      }
+    const cantidadCero =
+      cantidad == null || Math.abs(Number(cantidad) || 0) < 1e-9;
+
+    if (ticker && cantidadCero && !esIngresoTituloSinPeps(descripcion)) {
+      throw new Error(
+        `Movimientos fila ${r + 2}: con Ticker (C) y cantidad 0 (E), la descripción debe indicar Renta, Dividendo en efectivo o Renta y Amortización (ingresos sin PEPS).`
+      );
     }
 
     ops.push({
@@ -193,6 +213,7 @@ export function procesarCuentaComitente(tenenciasLotes, movimientos) {
     salidas_cuenta: 0,
     suscripcion_caucion_colocadora: 0,
     rescate_caucion_colocadora: 0,
+    ingresos_dividendos_rentas_amort: 0,
   };
 
   const detalleMovs = [];
@@ -210,6 +231,20 @@ export function procesarCuentaComitente(tenenciasLotes, movimientos) {
       detalleMovs.push({
         ...m,
         tipoLinea: tipo || "sin_clasificar",
+        peps: null,
+      });
+      continue;
+    }
+
+    const cantM = m.cantidad;
+    const cantidadCeroM =
+      cantM == null || Math.abs(cantM) < 1e-9;
+    if (cantidadCeroM && esIngresoTituloSinPeps(m.descripcion)) {
+      const imp = m.importe != null ? m.importe : 0;
+      cashFlows.ingresos_dividendos_rentas_amort += imp;
+      detalleMovs.push({
+        ...m,
+        tipoLinea: "dividendos_rentas_amortizacion_sin_peps",
         peps: null,
       });
       continue;

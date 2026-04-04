@@ -120,7 +120,9 @@
             Fila 1: A Fecha concertación, B Descripción, C Ticker, D Tipo instrumento,
             E Cantidad, F Precio, G Fecha liquidación (opcional), H Moneda,
             I Importe. Sin ticker, se clasifica por palabras en Descripción (Cobro,
-            Pago, APCOLFUT, APCOLCON).
+            Pago, APCOLFUT, APCOLCON). Con ticker y cantidad 0, si la descripción
+            indica Renta, Dividendo en efectivo o Renta y Amortización, se suma el
+            importe como ingreso por título sin afectar PEPS.
           </p>
           <div class="actions">
             <button type="button" class="btn-primary" id="btnImportarMovsCC">
@@ -157,6 +159,12 @@
             <div class="result-item">
               <div class="label">Rescate Caución Colocadora</div>
               <div class="valor" id="ccApcolcon">—</div>
+            </div>
+            <div class="result-item wide">
+              <div class="label">
+                Dividendos, rentas y amortización (sin PEPS, cantidad 0)
+              </div>
+              <div class="valor" id="ccRentaDiv">—</div>
             </div>
             <div class="result-item wide">
               <div class="label">Resultado ejercicio (ventas vs costo PEPS)</div>

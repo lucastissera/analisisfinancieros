@@ -148,6 +148,10 @@ function exportarExcelCC(resultado) {
     ["Salidas de Dinero en la Cuenta", cf.salidas_cuenta],
     ["Suscripción Caución Colocadora", cf.suscripcion_caucion_colocadora],
     ["Rescate Caución Colocadora", cf.rescate_caucion_colocadora],
+    [
+      "Dividendos, rentas y amortización (cantidad 0, sin PEPS)",
+      cf.ingresos_dividendos_rentas_amort ?? 0,
+    ],
     [],
     ["Resultado ejercicio (realizado ventas vs costo PEPS)", resultado.resultadoEjercicio],
     [],
@@ -247,6 +251,7 @@ function ejecutarAnalisisCC() {
   $("ccSalidas").textContent = fmtNum(cf.salidas_cuenta, 2);
   $("ccApcolfut").textContent = fmtNum(cf.suscripcion_caucion_colocadora, 2);
   $("ccApcolcon").textContent = fmtNum(cf.rescate_caucion_colocadora, 2);
+  $("ccRentaDiv").textContent = fmtNum(cf.ingresos_dividendos_rentas_amort ?? 0, 2);
   $("ccResEjercicio").textContent = fmtNum(resultado.resultadoEjercicio, 2);
 
   $("ccPanelResultados").hidden = false;
