@@ -94,8 +94,9 @@
           <p class="hint">
             Cargá manualmente cada lote (ticker, cantidad, precio unitario de costo)
             en orden PEPS (arriba el más antiguo), o importá un Excel con fila 1 de
-            títulos: A Ticker, B Cantidad, C Precio unitario. Esto debe estar listo
-            antes de importar los movimientos del período.
+            títulos: A Ticker, B Cantidad, C Precio unitario. Los importes de tenencias
+            deben expresarse en la misma moneda que elijas para el informe (selector
+            abajo). Esto debe estar listo antes de importar los movimientos del período.
           </p>
           <div id="ccTenenciasContainer" class="lotes-iniciales"></div>
           <div class="actions">
@@ -127,11 +128,23 @@
             Sin ticker, se clasifica por palabras en Descripción (Cobro,
             Pago, APCOLFUT, APCOLCON). Con ticker y cantidad 0, si la descripción
             indica Renta, Dividendo en efectivo o Renta y Amortización, se suma el
-            importe como ingreso por título sin afectar PEPS. Si en D el tipo de
-            instrumento es «Corporativos», la fila no entra al PEPS (se verá en el
-            detalle como excluida; ajuste aparte).
+            importe en el concepto correspondiente sin afectar PEPS. Si el tipo es
+            «Corporativos», entra al PEPS cuando la descripción indica compra/venta,
+            oferta de canje u oferta temprana de canje (cantidad ≠ 0); si solo es
+            renta o amortización, va al resumen de ingresos por título.
+            Las filas en distintas monedas (pesos, dólares, dólares C.V. 7000) se
+            homogeneizan al importar según la moneda del informe y cotizaciones del día
+            de concertación (ver nota en resultados).
           </p>
-          <div class="actions">
+          <div class="actions cc-movs-actions">
+            <div class="field cc-moneda-informe-field">
+              <label for="ccMonedaInforme">Moneda del informe</label>
+              <select id="ccMonedaInforme">
+                <option value="ARS">Pesos (ARS)</option>
+                <option value="USD">Dólares (USD)</option>
+                <option value="CV7000">Dólares C.V. 7000</option>
+              </select>
+            </div>
             <button type="button" class="btn-primary" id="btnImportarMovsCC">
               Importar Excel movimientos
             </button>
@@ -139,6 +152,9 @@
               Exportar procesado
             </button>
           </div>
+          <p id="ccFxCargando" class="hint cc-fx-cargando" hidden>
+            Obteniendo cotizaciones históricas…
+          </p>
           <input
             id="fileMovsCC"
             type="file"
@@ -150,6 +166,7 @@
 
         <section class="card" id="ccPanelResultados" hidden>
           <h2>Resultados</h2>
+          <p id="ccMonedaInformeResumen" class="hint cc-moneda-resumen"></p>
           <div class="results-grid cc-results">
             <div class="result-item wide">
               <div class="label">Ingresos de Dinero en la Cuenta</div>
@@ -167,11 +184,17 @@
               <div class="label">Rescate Caución Colocadora</div>
               <div class="valor" id="ccApcolcon">—</div>
             </div>
+            <div class="result-item">
+              <div class="label">Dividendos en efectivo (sin PEPS)</div>
+              <div class="valor" id="ccDivEfec">—</div>
+            </div>
+            <div class="result-item">
+              <div class="label">Renta (sin PEPS)</div>
+              <div class="valor" id="ccRenta">—</div>
+            </div>
             <div class="result-item wide">
-              <div class="label">
-                Dividendos, rentas y amortización (sin PEPS, cantidad 0)
-              </div>
-              <div class="valor" id="ccRentaDiv">—</div>
+              <div class="label">Renta y amortización (sin PEPS)</div>
+              <div class="valor" id="ccRentaAmort">—</div>
             </div>
             <div class="result-item wide">
               <div class="label">Resultado ejercicio (ventas vs costo PEPS)</div>

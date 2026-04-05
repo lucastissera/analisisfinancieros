@@ -48,15 +48,26 @@ function normalizarDescUpper(s) {
 }
 
 /**
- * Rentas, dividendos o amortización sobre el título: cantidad 0, no afecta PEPS.
- * Reconoce: "Renta", "Dividendo en efectivo", "Renta y Amortización".
+ * Ingresos sobre el título sin PEPS (cantidad 0).
+ * Orden de detección: "Renta y Amortización" antes que "Renta" suelta.
+ * @returns {'dividendo'|'renta'|'renta_amortizacion'|null}
  */
-export function esIngresoTituloSinPeps(descripcion) {
+export function clasificarIngresoTituloSinPeps(descripcion) {
   const d = normalizarDescUpper(descripcion);
-  if (d.includes("DIVIDENDO EN EFECTIVO")) return true;
-  if (d.includes("RENTA Y AMORTIZACION")) return true;
-  if (d.includes("RENTA")) return true;
-  return false;
+  if (d.includes("DIVIDENDO EN EFECTIVO")) return "dividendo";
+  if (d.includes("RENTA Y AMORTIZACION")) return "renta_amortizacion";
+  if (d.includes("RENTA")) return "renta";
+  return null;
+}
+
+export function esIngresoTituloSinPeps(descripcion) {
+  return clasificarIngresoTituloSinPeps(descripcion) != null;
+}
+
+/** Oferta de canje / oferta temprana de canje (instrumentos corporativos). */
+export function esOfertaCanje(descripcion) {
+  const d = normalizarDescUpper(descripcion);
+  return d.includes("OFERTA") && d.includes("CANJE");
 }
 
 /** Tipo de instrumento (columna D) = Corporativos: fuera del PEPS en este análisis. */
@@ -134,14 +145,9 @@ export function parsearMovimientosExcel(filas) {
     const cantidadCero =
       cantidad == null || Math.abs(Number(cantidad) || 0) < 1e-9;
 
-    if (
-      ticker &&
-      cantidadCero &&
-      !esIngresoTituloSinPeps(descripcion) &&
-      !esTipoCorporativos(tipoInstrumento)
-    ) {
+    if (ticker && cantidadCero && !esIngresoTituloSinPeps(descripcion)) {
       throw new Error(
-        `Movimientos fila ${r + 2}: con Ticker (C) y cantidad 0 (E), la descripción debe indicar Renta, Dividendo en efectivo o Renta y Amortización (ingresos sin PEPS), salvo Tipo instrumento Corporativos (excluido de PEPS).`
+        `Movimientos fila ${r + 2}: con Ticker (C) y cantidad 0 (E), la descripción debe indicar Dividendo en efectivo, Renta o Renta y Amortización (ingresos sin PEPS).`
       );
     }
 
@@ -168,6 +174,60 @@ export function parsearMovimientosExcel(filas) {
 }
 
 /**
+ * Misma lógica que una fila de parsearMovimientosExcel, pero sin ordenar ni lanzar errores:
+ * devuelve null si la fila se omite (sin fecha), no es convertible o sería inválida para el análisis.
+ */
+export function interpretarFilaMovimientoExcel(row, filaExcel) {
+  const fechaRaw = row.A ?? row[0];
+  if (
+    fechaRaw === undefined ||
+    fechaRaw === null ||
+    String(fechaRaw).trim() === ""
+  ) {
+    return null;
+  }
+  const fechaConc = excelDateToDate(fechaRaw);
+  if (!fechaConc || Number.isNaN(fechaConc.getTime())) {
+    return null;
+  }
+  const descripcion = String(row.B ?? row[1] ?? "");
+  const ticker = String(row.C ?? row[2] ?? "").trim();
+  const tipoInstrumento = String(row.D ?? row[3] ?? "").trim();
+  const cantidad = parseNumAR(row.E ?? row[4]);
+  const precio = parseNumAR(row.F ?? row[5]);
+  const fechaLiqRaw = row.G ?? row[6];
+  const fechaLiq =
+    fechaLiqRaw === undefined || fechaLiqRaw === null || String(fechaLiqRaw).trim() === ""
+      ? null
+      : excelDateToDate(fechaLiqRaw);
+  if (fechaLiq && Number.isNaN(fechaLiq.getTime())) {
+    return null;
+  }
+  const moneda = row.H ?? row[7];
+  const importe = parseNumAR(row.I ?? row[8]);
+
+  const cantidadCero =
+    cantidad == null || Math.abs(Number(cantidad) || 0) < 1e-9;
+
+  if (ticker && cantidadCero && !esIngresoTituloSinPeps(descripcion)) {
+    return null;
+  }
+
+  return {
+    fechaConc,
+    descripcion,
+    ticker: ticker ? ticker.toUpperCase() : "",
+    tipoInstrumento,
+    cantidad,
+    precio,
+    fechaLiq,
+    moneda,
+    importe,
+    filaExcel,
+  };
+}
+
+/**
  * Sin ticker: clasificar por descripción (orden: caución antes que cobro/pago genéricos).
  */
 export function clasificarFlujoCaja(descripcion) {
@@ -180,14 +240,59 @@ export function clasificarFlujoCaja(descripcion) {
 }
 
 function esCompra(m) {
+  const d = normalizarDescUpper(String(m.descripcion || ""));
+  if (d.includes("TRANSFERENCIA") && d.includes("EXTERNA")) {
+    if (d.includes("CREDITO") || d.includes("CRÉDITO")) return true;
+    if (d.includes("DEBITO") || d.includes("DÉBITO")) return false;
+  }
+  if (esOfertaCanje(m.descripcion)) {
+    const c = m.cantidad;
+    if (c != null && c > 0) return true;
+    if (c != null && c < 0) return false;
+  }
+  if (esTipoCorporativos(m.tipoInstrumento)) {
+    if (d.includes("COMPRA")) return true;
+    if (d.includes("VENTA")) return false;
+  }
   const c = m.cantidad;
   if (c != null && c > 0) return true;
   if (c != null && c < 0) return false;
-  const desc = String(m.descripcion || "").toUpperCase();
-  if (desc.includes("COMPRA")) return true;
-  if (desc.includes("VENTA")) return false;
+  if (d.includes("COMPRA")) return true;
+  if (d.includes("VENTA")) return false;
   if (m.importe != null && m.importe < 0) return true;
   return true;
+}
+
+/**
+ * Lado de cotización BNA / AL30C para homogeneizar moneda:
+ * - Caja: ingreso → vendedor, salida → comprador.
+ * - Compra de activo → vendedor; venta de activo → comprador.
+ * - Ingresos título (div/renta) con comisión negativa: según signo del importe.
+ */
+export function tipoCambioLado(m) {
+  const imp = m.importe;
+  const tick = String(m.ticker || "").trim();
+
+  if (!tick) {
+    if (imp != null && imp > 0) return "vendedor";
+    if (imp != null && imp < 0) return "comprador";
+    return "mid";
+  }
+
+  const d = normalizarDescUpper(String(m.descripcion || ""));
+  if (d.includes("TRANSFERENCIA") && d.includes("EXTERNA")) {
+    if (d.includes("CREDITO") || d.includes("CRÉDITO")) return "vendedor";
+    if (d.includes("DEBITO") || d.includes("DÉBITO")) return "comprador";
+  }
+
+  const cantCero = m.cantidad == null || Math.abs(m.cantidad) < 1e-9;
+  if (cantCero && esIngresoTituloSinPeps(m.descripcion)) {
+    if (imp != null && imp > 0) return "vendedor";
+    if (imp != null && imp < 0) return "comprador";
+    return "mid";
+  }
+
+  return esCompra(m) ? "vendedor" : "comprador";
 }
 
 function montoOperacion(m) {
@@ -210,7 +315,6 @@ function cmpFechaConcertacionFila(a, b) {
  * Así una compra en fila inferior a una venta del mismo día va antes en PEPS.
  */
 function prioridadOrdenPepsMismoTicker(m) {
-  if (esTipoCorporativos(m.tipoInstrumento)) return 1;
   const cant = m.cantidad;
   const cero = cant == null || Math.abs(cant) < 1e-9;
   if (cero && esIngresoTituloSinPeps(m.descripcion)) return 1;
@@ -303,7 +407,9 @@ export function procesarCuentaComitente(tenenciasLotes, movimientos) {
     salidas_cuenta: 0,
     suscripcion_caucion_colocadora: 0,
     rescate_caucion_colocadora: 0,
-    ingresos_dividendos_rentas_amort: 0,
+    ingresos_dividendos: 0,
+    ingresos_renta: 0,
+    ingresos_renta_y_amortizacion: 0,
   };
 
   const detalleMovs = [];
@@ -311,6 +417,9 @@ export function procesarCuentaComitente(tenenciasLotes, movimientos) {
 
   for (const m of movimientos) {
     const tick = m.ticker;
+    const cantM = m.cantidad;
+    const cantidadCeroM =
+      cantM == null || Math.abs(cantM) < 1e-9;
 
     if (!tick) {
       const tipo = clasificarFlujoCaja(m.descripcion);
@@ -326,24 +435,19 @@ export function procesarCuentaComitente(tenenciasLotes, movimientos) {
       continue;
     }
 
-    if (esTipoCorporativos(m.tipoInstrumento)) {
-      detalleMovs.push({
-        ...m,
-        tipoLinea: "corporativos_excluido_peps",
-        peps: null,
-      });
-      continue;
-    }
-
-    const cantM = m.cantidad;
-    const cantidadCeroM =
-      cantM == null || Math.abs(cantM) < 1e-9;
     if (cantidadCeroM && esIngresoTituloSinPeps(m.descripcion)) {
       const imp = m.importe != null ? m.importe : 0;
-      cashFlows.ingresos_dividendos_rentas_amort += imp;
+      const bucket = clasificarIngresoTituloSinPeps(m.descripcion);
+      if (bucket === "dividendo") {
+        cashFlows.ingresos_dividendos += imp;
+      } else if (bucket === "renta") {
+        cashFlows.ingresos_renta += imp;
+      } else if (bucket === "renta_amortizacion") {
+        cashFlows.ingresos_renta_y_amortizacion += imp;
+      }
       detalleMovs.push({
         ...m,
-        tipoLinea: "dividendos_rentas_amortizacion_sin_peps",
+        tipoLinea: `ingreso_${bucket}`,
         peps: null,
       });
       continue;

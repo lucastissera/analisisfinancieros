@@ -108,6 +108,39 @@ h1 {
   box-shadow: 0 0 0 2px rgba(61, 139, 253, 0.25);
 }
 
+.field select {
+  width: 100%;
+  padding: 0.55rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #121a26;
+  color: var(--text);
+  font-size: 1rem;
+}
+
+.field select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(61, 139, 253, 0.25);
+}
+
+.cc-movs-actions {
+  align-items: flex-end;
+}
+
+.cc-moneda-informe-field {
+  min-width: 220px;
+}
+
+.cc-moneda-resumen {
+  margin-top: 0;
+  margin-bottom: 0.75rem;
+}
+
+.cc-fx-cargando {
+  margin-top: 0.35rem;
+}
+
 .actions {
   display: flex;
   flex-wrap: wrap;

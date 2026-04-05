@@ -2,12 +2,34 @@ import {
   parsearTenenciasInicialesExcel,
   parsearMovimientosExcel,
   procesarCuentaComitente,
+  interpretarFilaMovimientoExcel,
+  tipoCambioLado,
 } from "./cc-engine.js";
+import {
+  fechaIsoLocal,
+  aplicarMonedaInformeAMovimientos,
+  normalizarMonedaColumna,
+  convertirImporteAInforme,
+  tipoCambioReferenciaUsado,
+} from "./cc-fx.js";
+import { obtenerCotizacionesPorFechas } from "./cc-fx-rates.js";
 
 const $ = (id) => document.getElementById(id);
 
 let ultimoResultadoCC = null;
 let ultimoNombreMovs = "movimientos.xlsx";
+/** @type {'ARS'|'USD'|'CV7000'} */
+let ultimoMonedaInforme = "ARS";
+/** @type {Map<string, object>|null} */
+let ultimoCotizacionesCC = null;
+
+let ccAnalisisEnCurso = false;
+
+function etiquetaMonedaInforme(v) {
+  if (v === "USD") return "Dólares (USD)";
+  if (v === "CV7000") return "Dólares C.V. 7000";
+  return "Pesos (ARS)";
+}
 
 function fmtNum(n, dec = 2) {
   if (n == null || !Number.isFinite(n)) return "—";
@@ -137,21 +159,96 @@ function mostrarErrorCC(msg) {
   el.hidden = !msg;
 }
 
+function filaOrigenExcelAI(row) {
+  return [
+    row.A ?? row[0] ?? "",
+    row.B ?? row[1] ?? "",
+    row.C ?? row[2] ?? "",
+    row.D ?? row[3] ?? "",
+    row.E ?? row[4] ?? "",
+    row.F ?? row[5] ?? "",
+    row.G ?? row[6] ?? "",
+    row.H ?? row[7] ?? "",
+    row.I ?? row[8] ?? "",
+  ];
+}
+
+/**
+ * Hoja con las mismas filas que el Excel importado (A–I sin modificar), J importe en moneda del informe, K tipo de cambio de referencia usado.
+ */
+function construirHojaOrigenConImporteConvertido(cotMap, monedaInforme) {
+  const filasRaw = window.__ccUltimasFilasMovs || [];
+  const labelInf = etiquetaMonedaInforme(monedaInforme);
+  const cab = [
+    "Fecha concertación",
+    "Descripción",
+    "Ticker",
+    "Tipo instrumento",
+    "Cantidad",
+    "Precio",
+    "Fecha liquidación",
+    "Moneda",
+    "Importe (archivo original)",
+    `Importe (${labelInf})`,
+    "Tipo de cambio aplicado (referencia)",
+  ];
+  const out = [cab];
+  for (let r = 0; r < filasRaw.length; r++) {
+    const row = filasRaw[r];
+    const base = filaOrigenExcelAI(row);
+    const mov = interpretarFilaMovimientoExcel(row, r + 2);
+    let importeConv = "";
+    let tcRef = "";
+    if (mov && cotMap) {
+      const iso = fechaIsoLocal(mov.fechaConc);
+      const cot = cotMap.get(iso);
+      const monedaNorm = normalizarMonedaColumna(mov.moneda);
+      const lado = tipoCambioLado({ ...mov, monedaNorm });
+      if (cot) {
+        const tc = tipoCambioReferenciaUsado(
+          monedaNorm,
+          monedaInforme,
+          cot,
+          lado
+        );
+        if (tc != null && Number.isFinite(tc)) {
+          tcRef = tc;
+        }
+        if (mov.importe != null && Number.isFinite(mov.importe)) {
+          importeConv = convertirImporteAInforme(
+            mov.importe,
+            monedaNorm,
+            monedaInforme,
+            cot,
+            lado
+          );
+        }
+      }
+    }
+    out.push([...base, importeConv, tcRef]);
+  }
+  return out;
+}
+
 function exportarExcelCC(resultado) {
   const XLSX = window.XLSX;
   const cf = resultado.cashFlows;
 
   const resumen = [
     ["Análisis de Cuenta Comitente"],
+    ["Moneda del informe", etiquetaMonedaInforme(ultimoMonedaInforme)],
+    [
+      "Nota cotizaciones",
+      "BNA y AL30C/MEP proxy vía Bluelytics (evolution.json); no es cotización oficial BYMA/BCRA. Verificar antes de uso fiscal.",
+    ],
     [],
     ["Ingresos de Dinero en la Cuenta", cf.ingresos_cuenta],
     ["Salidas de Dinero en la Cuenta", cf.salidas_cuenta],
     ["Suscripción Caución Colocadora", cf.suscripcion_caucion_colocadora],
     ["Rescate Caución Colocadora", cf.rescate_caucion_colocadora],
-    [
-      "Dividendos, rentas y amortización (cantidad 0, sin PEPS)",
-      cf.ingresos_dividendos_rentas_amort ?? 0,
-    ],
+    ["Dividendos en efectivo (sin PEPS)", cf.ingresos_dividendos ?? 0],
+    ["Renta (sin PEPS)", cf.ingresos_renta ?? 0],
+    ["Renta y amortización (sin PEPS)", cf.ingresos_renta_y_amortizacion ?? 0],
     [],
     ["Resultado ejercicio (realizado ventas vs costo PEPS)", resultado.resultadoEjercicio],
     [],
@@ -189,17 +286,28 @@ function exportarExcelCC(resultado) {
   const wsRes = XLSX.utils.aoa_to_sheet(resumen);
   const wsDet = XLSX.utils.aoa_to_sheet([cabDet, ...filasDet]);
   const wsPend = XLSX.utils.aoa_to_sheet([cabPend, ...filasPend]);
+  const aoaOrigen = construirHojaOrigenConImporteConvertido(
+    ultimoCotizacionesCC,
+    ultimoMonedaInforme
+  );
+  const wsOrigen = XLSX.utils.aoa_to_sheet(aoaOrigen);
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, wsRes, "Resumen");
   XLSX.utils.book_append_sheet(wb, wsDet, "Detalle movimientos");
   XLSX.utils.book_append_sheet(wb, wsPend, "Lotes pendientes");
+  XLSX.utils.book_append_sheet(wb, wsOrigen, "Origen importado");
 
   const base = ultimoNombreMovs.replace(/\.[^.]+$/, "");
   XLSX.writeFile(wb, `${base}_cc_procesado.xlsx`);
 }
 
-function ejecutarAnalisisCC() {
+async function ejecutarAnalisisCC() {
+  if (ccAnalisisEnCurso) return;
+  ccAnalisisEnCurso = true;
+  const elCargando = $("ccFxCargando");
+  const btnImport = $("btnImportarMovsCC");
+  const selMoneda = $("ccMonedaInforme");
   mostrarErrorCC("");
   let tenencias;
   try {
@@ -208,6 +316,7 @@ function ejecutarAnalisisCC() {
     mostrarErrorCC(e.message || String(e));
     $("ccPanelResultados").hidden = true;
     $("btnExportarCC").disabled = true;
+    ccAnalisisEnCurso = false;
     return;
   }
 
@@ -216,46 +325,113 @@ function ejecutarAnalisisCC() {
     mostrarErrorCC("Importá primero el Excel de movimientos del período (columnas A–I, fila 1 títulos).");
     $("ccPanelResultados").hidden = true;
     $("btnExportarCC").disabled = true;
+    ccAnalisisEnCurso = false;
     return;
   }
 
   let movimientos;
   try {
-    movimientos = parsearMovimientosExcel(filasMovs);
+    movimientos = parsearMovimientosExcel(filasMovs).map((m) => ({
+      ...m,
+      monedaNorm: normalizarMonedaColumna(m.moneda),
+    }));
   } catch (e) {
     mostrarErrorCC(e.message || String(e));
     $("ccPanelResultados").hidden = true;
     $("btnExportarCC").disabled = true;
+    ccAnalisisEnCurso = false;
     return;
   }
 
   if (movimientos.length === 0) {
     mostrarErrorCC("No hay filas de movimientos válidas.");
+    ccAnalisisEnCurso = false;
+    return;
+  }
+
+  const monedaInforme = selMoneda.value;
+  if (monedaInforme !== "ARS" && monedaInforme !== "USD" && monedaInforme !== "CV7000") {
+    mostrarErrorCC("Moneda del informe no válida.");
+    ccAnalisisEnCurso = false;
+    return;
+  }
+
+  const fechasIso = movimientos.map((m) => fechaIsoLocal(m.fechaConc));
+  if (fechasIso.some((f) => !f)) {
+    mostrarErrorCC("Hay movimientos con fecha de concertación inválida.");
+    $("ccPanelResultados").hidden = true;
+    $("btnExportarCC").disabled = true;
+    ccAnalisisEnCurso = false;
+    return;
+  }
+
+  let cotMap;
+  try {
+    elCargando.hidden = false;
+    btnImport.disabled = true;
+    selMoneda.disabled = true;
+    cotMap = await obtenerCotizacionesPorFechas(new Set(fechasIso));
+  } catch (e) {
+    mostrarErrorCC(e.message || String(e));
+    $("ccPanelResultados").hidden = true;
+    $("btnExportarCC").disabled = true;
+    elCargando.hidden = true;
+    btnImport.disabled = false;
+    selMoneda.disabled = false;
+    ccAnalisisEnCurso = false;
+    return;
+  } finally {
+    elCargando.hidden = true;
+    btnImport.disabled = false;
+    selMoneda.disabled = false;
+  }
+
+  let movConv;
+  try {
+    movConv = aplicarMonedaInformeAMovimientos(movimientos, monedaInforme, cotMap);
+  } catch (e) {
+    mostrarErrorCC(e.message || String(e));
+    $("ccPanelResultados").hidden = true;
+    $("btnExportarCC").disabled = true;
+    ccAnalisisEnCurso = false;
     return;
   }
 
   let resultado;
   try {
-    resultado = procesarCuentaComitente(tenencias, movimientos);
+    resultado = procesarCuentaComitente(tenencias, movConv);
   } catch (e) {
     mostrarErrorCC(e.message || String(e));
     $("ccPanelResultados").hidden = true;
     $("btnExportarCC").disabled = true;
+    ccAnalisisEnCurso = false;
     return;
   }
 
   ultimoResultadoCC = resultado;
+  ultimoMonedaInforme = monedaInforme;
+  ultimoCotizacionesCC = cotMap;
 
   const cf = resultado.cashFlows;
   $("ccIngresos").textContent = fmtNum(cf.ingresos_cuenta, 2);
   $("ccSalidas").textContent = fmtNum(cf.salidas_cuenta, 2);
   $("ccApcolfut").textContent = fmtNum(cf.suscripcion_caucion_colocadora, 2);
   $("ccApcolcon").textContent = fmtNum(cf.rescate_caucion_colocadora, 2);
-  $("ccRentaDiv").textContent = fmtNum(cf.ingresos_dividendos_rentas_amort ?? 0, 2);
+  $("ccDivEfec").textContent = fmtNum(cf.ingresos_dividendos ?? 0, 2);
+  $("ccRenta").textContent = fmtNum(cf.ingresos_renta ?? 0, 2);
+  $("ccRentaAmort").textContent = fmtNum(cf.ingresos_renta_y_amortizacion ?? 0, 2);
   $("ccResEjercicio").textContent = fmtNum(resultado.resultadoEjercicio, 2);
+
+  const resumenMon = $("ccMonedaInformeResumen");
+  if (resumenMon) {
+    resumenMon.textContent =
+      `Importes en ${etiquetaMonedaInforme(monedaInforme)}. ` +
+      "Cotizaciones: dólar oficial (Bluelytics Oficial) y MEP/AL30C proxy (Bluelytics Blue) por fecha de concertación; no equivalen a tablero BYMA/BCRA.";
+  }
 
   $("ccPanelResultados").hidden = false;
   $("btnExportarCC").disabled = false;
+  ccAnalisisEnCurso = false;
 }
 
 function bindNavigation() {
@@ -289,7 +465,11 @@ $("ccTenenciasContainer").addEventListener("click", (ev) => {
 });
 
 $("ccTenenciasContainer").addEventListener("change", () => {
-  if (window.__ccUltimasFilasMovs) ejecutarAnalisisCC();
+  if (window.__ccUltimasFilasMovs) void ejecutarAnalisisCC();
+});
+
+$("ccMonedaInforme").addEventListener("change", () => {
+  if (window.__ccUltimasFilasMovs) void ejecutarAnalisisCC();
 });
 
 $("btnImportarTenenciasCC").addEventListener("click", () => {
@@ -317,7 +497,7 @@ $("fileTenenciasCC").addEventListener("change", async (ev) => {
       row.querySelector('[data-field="pu"]').value = String(L.precioUnitario);
     }
     if (lotes.length === 0) initTenenciasCC();
-    if (window.__ccUltimasFilasMovs) ejecutarAnalisisCC();
+    if (window.__ccUltimasFilasMovs) void ejecutarAnalisisCC();
   } catch (e) {
     mostrarErrorCC(e.message || String(e));
   }
@@ -336,7 +516,7 @@ $("fileMovsCC").addEventListener("change", async (ev) => {
   try {
     const buf = await file.arrayBuffer();
     window.__ccUltimasFilasMovs = leerExcelHoja(buf);
-    ejecutarAnalisisCC();
+    await ejecutarAnalisisCC();
   } catch (e) {
     mostrarErrorCC(e.message || String(e));
     $("ccPanelResultados").hidden = true;
