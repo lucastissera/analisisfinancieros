@@ -297,17 +297,56 @@ function nombreHojaExcelUnico(label, usados) {
   return n;
 }
 
-const TIPOS_LINEA_CAUCION = new Set([
+/** Cobrado (APCOLFUT) y prestado (APCOLCON) en una misma hoja. */
+const TIPOS_CAUCION_COLOCADORA = new Set([
   "rescate_caucion_colocadora",
   "suscripcion_caucion_colocadora",
+]);
+
+/** Pedido (APTOMCON) y pagado (APTOMFUT) en hoja aparte. */
+const TIPOS_CAUCION_TOMADORA = new Set([
   "pedido_caucion_tomadora",
   "pagado_caucion_tomadora",
 ]);
 
-function esAccionOCedear(tipoInstrumento) {
+/** Compra / venta / compra sin cantidad con ticker (PEPS). */
+function esOperacionPepsMovimiento(d) {
+  const tl = d.tipoLinea;
+  if (tl !== "compra" && tl !== "venta" && tl !== "compra_sin_cantidad") {
+    return false;
+  }
+  return Boolean(d.ticker);
+}
+
+function esTipoInstrumentoBono(tipoInstrumento) {
   const t = normalizarTextoComparacion(String(tipoInstrumento ?? "").trim());
-  if (t.includes("CORPORATIVOS")) return false;
-  return t.includes("ACCION") || t.includes("CEDEAR");
+  if (!t) return false;
+  if (esTipoCorporativos(tipoInstrumento)) return false;
+  if (t.includes("CEDEAR")) return false;
+  if (t.includes("ACCION")) return false;
+  return (
+    t.includes("BONO") ||
+    t.includes("OBLIGACION") ||
+    t.includes("LEBAC") ||
+    t.includes("LECAP") ||
+    t.includes("LEFIS") ||
+    t.includes("BOPREAL")
+  );
+}
+
+/**
+ * Clase de instrumento para hojas PEPS (compra/venta).
+ * @returns {'acciones'|'cedears'|'corporativos'|'bonos'|null}
+ */
+function claseInstrumentoPeps(d) {
+  if (!esOperacionPepsMovimiento(d)) return null;
+  const ti = d.tipoInstrumento;
+  if (esTipoCorporativos(ti)) return "corporativos";
+  const t = normalizarTextoComparacion(String(ti ?? "").trim());
+  if (t.includes("CEDEAR")) return "cedears";
+  if (esTipoInstrumentoBono(ti)) return "bonos";
+  if (t.includes("ACCION")) return "acciones";
+  return null;
 }
 
 function ordenarDetalleMovs(dets) {
@@ -318,20 +357,60 @@ function ordenarDetalleMovs(dets) {
   });
 }
 
+/** Activo por activo (ticker), luego cronológico. */
+function ordenarPorTickerLuegoFecha(dets) {
+  return [...dets].sort((a, b) => {
+    const ta = String(a.ticker || "");
+    const tb = String(b.ticker || "");
+    if (ta !== tb) return ta.localeCompare(tb, "es");
+    const tf = a.fechaConc - b.fechaConc;
+    if (tf !== 0) return tf;
+    return (a.filaExcel ?? 0) - (b.filaExcel ?? 0);
+  });
+}
+
+function filaExcluidaDeHojaRubroPorTipo(d, tipoLineaKey) {
+  if (tipoLineaKey === "ingreso_dividendo") return true;
+  if (tipoLineaKey === "ingresos_cuenta" || tipoLineaKey === "salidas_cuenta") {
+    return true;
+  }
+  if (
+    tipoLineaKey === "compra" ||
+    tipoLineaKey === "venta" ||
+    tipoLineaKey === "compra_sin_cantidad"
+  ) {
+    return claseInstrumentoPeps(d) != null;
+  }
+  return false;
+}
+
 function movimientosAgrupadosPorClase(detalle, clase) {
   let rows;
   switch (clase) {
-    case "cauciones":
-      rows = detalle.filter((d) => TIPOS_LINEA_CAUCION.has(d.tipoLinea));
+    case "caucion_colocadora":
+      rows = detalle.filter((d) => TIPOS_CAUCION_COLOCADORA.has(d.tipoLinea));
       break;
-    case "corporativos":
-      rows = detalle.filter((d) => esTipoCorporativos(d.tipoInstrumento));
+    case "caucion_tomadora":
+      rows = detalle.filter((d) => TIPOS_CAUCION_TOMADORA.has(d.tipoLinea));
       break;
-    case "acciones":
+    case "caja_dinero":
       rows = detalle.filter(
-        (d) => Boolean(d.ticker) && esAccionOCedear(d.tipoInstrumento)
+        (d) =>
+          d.tipoLinea === "ingresos_cuenta" || d.tipoLinea === "salidas_cuenta"
       );
       break;
+    case "peps_acciones":
+      rows = detalle.filter((d) => claseInstrumentoPeps(d) === "acciones");
+      return ordenarPorTickerLuegoFecha(rows);
+    case "peps_cedears":
+      rows = detalle.filter((d) => claseInstrumentoPeps(d) === "cedears");
+      return ordenarPorTickerLuegoFecha(rows);
+    case "peps_corporativos":
+      rows = detalle.filter((d) => claseInstrumentoPeps(d) === "corporativos");
+      return ordenarPorTickerLuegoFecha(rows);
+    case "peps_bonos":
+      rows = detalle.filter((d) => claseInstrumentoPeps(d) === "bonos");
+      return ordenarPorTickerLuegoFecha(rows);
     case "gastos":
       rows = detalle.filter(
         (d) =>
@@ -355,20 +434,32 @@ function movimientosAgrupadosPorClase(detalle, clase) {
   return ordenarDetalleMovs(rows);
 }
 
-function appendHojaAgrupadaClase(wb, XLSX, titulo, cabDet, rows, filaFn, nombresReservados) {
+function appendHojaAgrupadaClase(
+  wb,
+  XLSX,
+  tituloFila,
+  cabDet,
+  rows,
+  filaFn,
+  nombresReservados,
+  nombreHojaSheet
+) {
   let sumImp = 0;
   for (const d of rows) {
     const imp = d.importe;
     if (imp != null && Number.isFinite(imp)) sumImp += imp;
   }
   const aoa = [
-    [titulo],
+    [tituloFila],
     ["Total importe (suma algebraica)", sumImp],
     [],
     cabDet,
     ...rows.map((d) => filaFn(d)),
   ];
-  const nombre = nombreHojaExcelUnico(titulo, nombresReservados);
+  const nombre = nombreHojaExcelUnico(
+    nombreHojaSheet != null ? nombreHojaSheet : tituloFila,
+    nombresReservados
+  );
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   XLSX.utils.book_append_sheet(wb, ws, nombre);
 }
@@ -440,7 +531,7 @@ function exportarExcelCC(resultado) {
     "Ticker",
     "Cantidad restante",
     "Valor unitario (PEPS)",
-    "Costo Histórico Promedio",
+    "Costo Histórico",
   ];
   const filasPend = (resultado.lotesPendientes || []).map((p) => [
     p.ticker,
@@ -478,7 +569,9 @@ function exportarExcelCC(resultado) {
   }
   const tiposOrdenados = [...porTipo.keys()].sort((a, b) => a.localeCompare(b));
   for (const tipo of tiposOrdenados) {
-    const rows = porTipo.get(tipo);
+    const rowsRaw = porTipo.get(tipo);
+    const rows = rowsRaw.filter((d) => !filaExcluidaDeHojaRubroPorTipo(d, tipo));
+    if (rows.length === 0) continue;
     const label = etiquetaRubroTipoLinea(tipo);
     let sumImp = 0;
     for (const d of rows) {
@@ -511,14 +604,18 @@ function exportarExcelCC(resultado) {
   }
 
   const hojasAgrupadas = [
-    ["Cauciones", "cauciones"],
-    ["Corporativos", "corporativos"],
-    ["Acciones", "acciones"],
-    ["Gastos", "gastos"],
-    ["Renta y amortización", "renta_amort"],
-    ["Dividendos", "dividendos"],
+    ["Caucion Colocadora", "caucion_colocadora", null],
+    ["Caución Tomadora", "caucion_tomadora", null],
+    ["Ingresos y egresos de dinero en cuenta", "caja_dinero", "Dinero en cuenta"],
+    ["Acciones", "peps_acciones", null],
+    ["Cedears", "peps_cedears", null],
+    ["Corporativos", "peps_corporativos", null],
+    ["Bonos", "peps_bonos", null],
+    ["Gastos", "gastos", null],
+    ["Renta y amortización", "renta_amort", null],
+    ["Dividendos", "dividendos", null],
   ];
-  for (const [titulo, clase] of hojasAgrupadas) {
+  for (const [titulo, clase, nombreHoja] of hojasAgrupadas) {
     const rowsAgr = movimientosAgrupadosPorClase(resultado.detalleMovs, clase);
     appendHojaAgrupadaClase(
       wb,
@@ -527,7 +624,8 @@ function exportarExcelCC(resultado) {
       cabDet,
       rowsAgr,
       filaDetalleMovimientoExcel,
-      nombresReservados
+      nombresReservados,
+      nombreHoja
     );
   }
 
