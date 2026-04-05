@@ -119,8 +119,11 @@
           <p class="hint">
             Fila 1: A Fecha concertación, B Descripción, C Ticker, D Tipo instrumento,
             E Cantidad, F Precio, G Fecha liquidación (opcional), H Moneda,
-            I Importe. Los CEDEARs y demás tickers pueden venir intercalados: el
-            sistema agrupa por ticker y ordena por fecha antes del PEPS.
+            I Importe.             Los CEDEARs y demás tickers pueden venir intercalados: se agrupa por
+            ticker, se ordena por fecha (las filas con fechas anteriores van
+            primero aunque estén más abajo en el archivo) y el mismo día las
+            compras se procesan antes que las ventas aunque la venta esté en una
+            fila superior a la compra.
             Sin ticker, se clasifica por palabras en Descripción (Cobro,
             Pago, APCOLFUT, APCOLCON). Con ticker y cantidad 0, si la descripción
             indica Renta, Dividendo en efectivo o Renta y Amortización, se suma el

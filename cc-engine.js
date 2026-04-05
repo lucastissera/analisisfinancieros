@@ -205,10 +205,39 @@ function cmpFechaConcertacionFila(a, b) {
 }
 
 /**
- * CEDEARs y demás instrumentos: el Excel suele traer filas intercaladas (varios
- * tickers mezclados). Se agrupa por ticker, se ordena cada grupo por fecha de
- * concertación y nº de fila, y se fusiona en una única línea de tiempo global
- * para que el PEPS respete el orden temporal real de cada título.
+ * Mismo día, mismo ticker: primero compras (dan de alta lote PEPS), luego filas
+ * que no mueven lotes (dividendos, corporativos), después ventas.
+ * Así una compra en fila inferior a una venta del mismo día va antes en PEPS.
+ */
+function prioridadOrdenPepsMismoTicker(m) {
+  if (esTipoCorporativos(m.tipoInstrumento)) return 1;
+  const cant = m.cantidad;
+  const cero = cant == null || Math.abs(cant) < 1e-9;
+  if (cero && esIngresoTituloSinPeps(m.descripcion)) return 1;
+  if (cant != null && cant > 0) return 0;
+  if (cant != null && cant < 0) return 2;
+  return esCompra(m) ? 0 : 2;
+}
+
+function cmpOrdenPepsMismoTicker(a, b) {
+  const tf = a.fechaConc - b.fechaConc;
+  if (tf !== 0) return tf;
+  const pa = prioridadOrdenPepsMismoTicker(a);
+  const pb = prioridadOrdenPepsMismoTicker(b);
+  if (pa !== pb) return pa - pb;
+  return (a.filaExcel ?? 0) - (b.filaExcel ?? 0);
+}
+
+/** Entre distintos tickers / sin ticker: solo fecha y nº de fila Excel. */
+function cmpMergeCronologicoGlobal(a, b) {
+  return cmpFechaConcertacionFila(a, b);
+}
+
+/**
+ * CEDEARs y demás: se agrupa por ticker; en cada grupo las fechas pueden no ir
+ * en orden de fila (filas inferiores con fechas anteriores se ordenan por fecha
+ * primero). Mismo día: compras antes que ventas aunque la venta esté en fila
+ * superior. Luego se fusiona todo en una línea de tiempo global.
  */
 export function prepararMovimientosIntercaladosCedears(movimientos) {
   const lista = [...movimientos];
@@ -223,7 +252,7 @@ export function prepararMovimientosIntercaladosCedears(movimientos) {
     porTicker.get(t).push(m);
   }
   for (const arr of porTicker.values()) {
-    arr.sort(cmpFechaConcertacionFila);
+    arr.sort(cmpOrdenPepsMismoTicker);
   }
 
   const grupos = [sinTicker, ...porTicker.values()];
@@ -235,7 +264,7 @@ export function prepararMovimientosIntercaladosCedears(movimientos) {
     for (let g = 0; g < grupos.length; g++) {
       if (idx[g] >= grupos[g].length) continue;
       const m = grupos[g][idx[g]];
-      if (elegido == null || cmpFechaConcertacionFila(m, elegido) < 0) {
+      if (elegido == null || cmpMergeCronologicoGlobal(m, elegido) < 0) {
         elegido = m;
         gElegido = g;
       }
