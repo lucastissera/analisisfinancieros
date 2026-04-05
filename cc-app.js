@@ -263,7 +263,7 @@ function importeOperacionRelevanteMov(d) {
 }
 
 /**
- * Costo de origen PEPS (alineado con Activos en tenencia): costo de compra o cost basis en venta.
+ * Costo de origen PEPS (alineado con Activos en tenencia): compra positiva; venta en negativo (egreso de costo).
  */
 function importeOrigenPepsParaExcel(d) {
   const tl = d.tipoLinea;
@@ -271,7 +271,7 @@ function importeOrigenPepsParaExcel(d) {
     return d.peps.costoAgregado;
   }
   if (tl === "venta" && d.peps?.costBasis != null) {
-    return d.peps.costBasis;
+    return -Math.abs(d.peps.costBasis);
   }
   if (tl === "compra_sin_cantidad") {
     const qty = Math.abs(d.cantidad ?? 0);
@@ -403,6 +403,13 @@ function ordenarPorTickerLuegoFecha(dets) {
 
 function filaExcluidaDeHojaRubroPorTipo(d, tipoLineaKey) {
   if (tipoLineaKey === "ingreso_dividendo") return true;
+  if (
+    tipoLineaKey === "ingreso_renta" ||
+    tipoLineaKey === "ingreso_renta_y_amortizacion" ||
+    tipoLineaKey === "ingreso_amortizacion"
+  ) {
+    return true;
+  }
   if (tipoLineaKey === "ingresos_cuenta" || tipoLineaKey === "salidas_cuenta") {
     return true;
   }
