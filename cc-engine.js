@@ -49,13 +49,14 @@ function normalizarDescUpper(s) {
 
 /**
  * Ingresos sobre el título sin PEPS (cantidad 0).
- * Orden de detección: "Renta y Amortización" antes que "Renta" suelta.
+ * Orden: "Renta y Amortización" antes que "Amortización" sola, y esta antes que "Renta" suelta.
  * @returns {'dividendo'|'renta'|'renta_amortizacion'|null}
  */
 export function clasificarIngresoTituloSinPeps(descripcion) {
   const d = normalizarDescUpper(descripcion);
   if (d.includes("DIVIDENDO EN EFECTIVO")) return "dividendo";
   if (d.includes("RENTA Y AMORTIZACION")) return "renta_amortizacion";
+  if (d.includes("AMORTIZACION")) return "renta_amortizacion";
   if (d.includes("RENTA")) return "renta";
   return null;
 }
@@ -147,7 +148,7 @@ export function parsearMovimientosExcel(filas) {
 
     if (ticker && cantidadCero && !esIngresoTituloSinPeps(descripcion)) {
       throw new Error(
-        `Movimientos fila ${r + 2}: con Ticker (C) y cantidad 0 (E), la descripción debe indicar Dividendo en efectivo, Renta o Renta y Amortización (ingresos sin PEPS).`
+        `Movimientos fila ${r + 2}: con Ticker (C) y cantidad 0 (E), la descripción debe indicar Dividendo en efectivo, Renta, Renta y Amortización o Amortización (ingresos sin PEPS).`
       );
     }
 
