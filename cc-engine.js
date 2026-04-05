@@ -198,11 +198,61 @@ function montoOperacion(m) {
   return 0;
 }
 
+function cmpFechaConcertacionFila(a, b) {
+  const t = a.fechaConc - b.fechaConc;
+  if (t !== 0) return t;
+  return (a.filaExcel ?? 0) - (b.filaExcel ?? 0);
+}
+
+/**
+ * CEDEARs y demás instrumentos: el Excel suele traer filas intercaladas (varios
+ * tickers mezclados). Se agrupa por ticker, se ordena cada grupo por fecha de
+ * concertación y nº de fila, y se fusiona en una única línea de tiempo global
+ * para que el PEPS respete el orden temporal real de cada título.
+ */
+export function prepararMovimientosIntercaladosCedears(movimientos) {
+  const lista = [...movimientos];
+  const sinTicker = lista.filter((m) => !m.ticker);
+  sinTicker.sort(cmpFechaConcertacionFila);
+
+  const porTicker = new Map();
+  for (const m of lista) {
+    if (!m.ticker) continue;
+    const t = m.ticker;
+    if (!porTicker.has(t)) porTicker.set(t, []);
+    porTicker.get(t).push(m);
+  }
+  for (const arr of porTicker.values()) {
+    arr.sort(cmpFechaConcertacionFila);
+  }
+
+  const grupos = [sinTicker, ...porTicker.values()];
+  const idx = grupos.map(() => 0);
+  const resultado = [];
+  while (true) {
+    let elegido = null;
+    let gElegido = -1;
+    for (let g = 0; g < grupos.length; g++) {
+      if (idx[g] >= grupos[g].length) continue;
+      const m = grupos[g][idx[g]];
+      if (elegido == null || cmpFechaConcertacionFila(m, elegido) < 0) {
+        elegido = m;
+        gElegido = g;
+      }
+    }
+    if (gElegido < 0) break;
+    resultado.push(elegido);
+    idx[gElegido]++;
+  }
+  return resultado;
+}
+
 /**
  * @param {Array<{ ticker: string, cantidad: number, precioUnitario: number, totalCost: number }>} tenenciasLotes orden PEPS (primero = más antiguo)
  * @param {Array} movimientos parseados
  */
 export function procesarCuentaComitente(tenenciasLotes, movimientos) {
+  movimientos = prepararMovimientosIntercaladosCedears(movimientos);
   /** ticker -> cola de lotes { qty, totalCost } */
   const porTicker = new Map();
 

@@ -119,7 +119,9 @@
           <p class="hint">
             Fila 1: A Fecha concertación, B Descripción, C Ticker, D Tipo instrumento,
             E Cantidad, F Precio, G Fecha liquidación (opcional), H Moneda,
-            I Importe. Sin ticker, se clasifica por palabras en Descripción (Cobro,
+            I Importe. Los CEDEARs y demás tickers pueden venir intercalados: el
+            sistema agrupa por ticker y ordena por fecha antes del PEPS.
+            Sin ticker, se clasifica por palabras en Descripción (Cobro,
             Pago, APCOLFUT, APCOLCON). Con ticker y cantidad 0, si la descripción
             indica Renta, Dividendo en efectivo o Renta y Amortización, se suma el
             importe como ingreso por título sin afectar PEPS. Si en D el tipo de
