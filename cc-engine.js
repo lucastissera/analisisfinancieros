@@ -702,7 +702,12 @@ export function procesarCuentaComitente(tenenciasLotes, movimientos) {
       const costo = importeOperacionRelevante(m)
         ? Math.abs(m.importe)
         : qty * pu;
-      cola.push({ qty, totalCost: costo });
+      cola.push({
+        qty,
+        totalCost: costo,
+        fechaConcOrigen: m.fechaConc,
+        filaExcelOrigen: m.filaExcel,
+      });
       detalleMovs.push({
         ...m,
         tipoLinea: "compra",
@@ -752,6 +757,8 @@ export function procesarCuentaComitente(tenenciasLotes, movimientos) {
         cantidad: lot.qty,
         valorUnitario: vu,
         costoRemanente: lot.totalCost,
+        fechaConcOrigen: lot.fechaConcOrigen ?? null,
+        filaExcelOrigen: lot.filaExcelOrigen ?? null,
       });
     }
   }

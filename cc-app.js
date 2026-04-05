@@ -257,6 +257,37 @@ function filaDetalleMovimientoExcel(d) {
   ];
 }
 
+function importeOperacionRelevanteMov(d) {
+  const imp = d.importe;
+  return imp != null && Number.isFinite(imp) && Math.abs(imp) > 1e-9;
+}
+
+/**
+ * Costo de origen PEPS (alineado con Activos en tenencia): costo de compra o cost basis en venta.
+ */
+function importeOrigenPepsParaExcel(d) {
+  const tl = d.tipoLinea;
+  if (tl === "compra" && d.peps?.costoAgregado != null) {
+    return d.peps.costoAgregado;
+  }
+  if (tl === "venta" && d.peps?.costBasis != null) {
+    return d.peps.costBasis;
+  }
+  if (tl === "compra_sin_cantidad") {
+    const qty = Math.abs(d.cantidad ?? 0);
+    const pu = d.precio != null ? Math.abs(d.precio) : 0;
+    if (importeOperacionRelevanteMov(d)) return Math.abs(d.importe);
+    return qty * pu;
+  }
+  return d.importe ?? "";
+}
+
+function filaDetalleMovimientoExcelHojaPeps(d) {
+  const row = filaDetalleMovimientoExcel(d);
+  row[6] = importeOrigenPepsParaExcel(d);
+  return row;
+}
+
 function etiquetaRubroTipoLinea(tipoLinea) {
   const map = {
     gasto_iva_o_descubierto: "Gasto IVA y descubierto",
@@ -438,22 +469,28 @@ function appendHojaAgrupadaClase(
   wb,
   XLSX,
   tituloFila,
-  cabDet,
+  cabCabecera,
   rows,
   filaFn,
   nombresReservados,
-  nombreHojaSheet
+  nombreHojaSheet,
+  sumarCostoOrigenPeps
 ) {
   let sumImp = 0;
   for (const d of rows) {
-    const imp = d.importe;
-    if (imp != null && Number.isFinite(imp)) sumImp += imp;
+    if (sumarCostoOrigenPeps) {
+      const x = importeOrigenPepsParaExcel(d);
+      if (x != null && Number.isFinite(x)) sumImp += x;
+    } else {
+      const imp = d.importe;
+      if (imp != null && Number.isFinite(imp)) sumImp += imp;
+    }
   }
   const aoa = [
     [tituloFila],
     ["Total importe (suma algebraica)", sumImp],
     [],
-    cabDet,
+    cabCabecera,
     ...rows.map((d) => filaFn(d)),
   ];
   const nombre = nombreHojaExcelUnico(
@@ -525,16 +562,29 @@ function exportarExcelCC(resultado) {
     "Resultado PEPS (ventas)",
     "Gasto op. consolidado",
   ];
+  const cabDetPeps = [
+    "Fecha concertación",
+    "Ticker",
+    "Descripción",
+    "Tipo línea",
+    "Cantidad",
+    "Precio",
+    "Importe (costo origen)",
+    "Resultado PEPS (ventas)",
+    "Gasto op. consolidado",
+  ];
   const filasDet = resultado.detalleMovs.map((d) => filaDetalleMovimientoExcel(d));
 
   const cabPend = [
     "Ticker",
+    "Fecha concertación origen",
     "Cantidad restante",
     "Valor unitario (PEPS)",
     "Costo Histórico",
   ];
   const filasPend = (resultado.lotesPendientes || []).map((p) => [
     p.ticker,
+    fmtFecha(p.fechaConcOrigen),
     p.cantidad,
     p.valorUnitario,
     p.costoRemanente,
@@ -617,15 +667,17 @@ function exportarExcelCC(resultado) {
   ];
   for (const [titulo, clase, nombreHoja] of hojasAgrupadas) {
     const rowsAgr = movimientosAgrupadosPorClase(resultado.detalleMovs, clase);
+    const esPeps = clase.startsWith("peps_");
     appendHojaAgrupadaClase(
       wb,
       XLSX,
       titulo,
-      cabDet,
+      esPeps ? cabDetPeps : cabDet,
       rowsAgr,
-      filaDetalleMovimientoExcel,
+      esPeps ? filaDetalleMovimientoExcelHojaPeps : filaDetalleMovimientoExcel,
       nombresReservados,
-      nombreHoja
+      nombreHoja,
+      esPeps
     );
   }
 
