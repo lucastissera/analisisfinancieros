@@ -176,8 +176,15 @@ function filaOrigenExcelAI(row) {
   ];
 }
 
+function monedaOriginalCelda(d) {
+  if (d == null) return "—";
+  const m = d.moneda;
+  if (m == null || String(m).trim() === "") return "—";
+  return String(m);
+}
+
 /**
- * Hoja con las mismas filas que el Excel importado (A–I sin modificar), J importe en moneda del informe, K tipo de cambio de referencia usado.
+ * Hoja con las mismas filas que el Excel importado (A–I sin modificar), moneda original explícita, importe en moneda del informe y tipo de cambio.
  */
 function construirHojaOrigenConImporteConvertido(cotMap, monedaInforme) {
   const filasRaw = window.__ccUltimasFilasMovs || [];
@@ -192,6 +199,7 @@ function construirHojaOrigenConImporteConvertido(cotMap, monedaInforme) {
     "Fecha liquidación",
     "Moneda",
     "Importe (archivo original)",
+    "Moneda original de la op.",
     `Importe (${labelInf})`,
     "Tipo de cambio aplicado (referencia)",
   ];
@@ -207,7 +215,8 @@ function construirHojaOrigenConImporteConvertido(cotMap, monedaInforme) {
         importeConv = mov.importe;
       }
       tcRef = "(sin conversión)";
-      out.push([...base, importeConv, tcRef]);
+      const monedaOrig = monedaOriginalCelda({ moneda: base[7] });
+      out.push([...base.slice(0, 9), monedaOrig, importeConv, tcRef]);
       continue;
     }
     if (mov && cotMap) {
@@ -236,7 +245,8 @@ function construirHojaOrigenConImporteConvertido(cotMap, monedaInforme) {
         }
       }
     }
-    out.push([...base, importeConv, tcRef]);
+    const monedaOrig = monedaOriginalCelda({ moneda: base[7] });
+    out.push([...base.slice(0, 9), monedaOrig, importeConv, tcRef]);
   }
   return out;
 }
@@ -250,6 +260,7 @@ function filaDetalleMovimientoExcel(d) {
     d.cantidad ?? "",
     d.precio ?? "",
     d.importe ?? "",
+    monedaOriginalCelda(d),
     d.peps?.resultado != null ? d.peps.resultado : "",
     d.gastoOperacionAsociado != null && Number.isFinite(d.gastoOperacionAsociado)
       ? d.gastoOperacionAsociado
@@ -572,6 +583,7 @@ function exportarExcelCC(resultado) {
     "Cantidad",
     "Precio",
     "Importe",
+    "Moneda original de la op.",
     "Resultado PEPS (ventas)",
     "Gasto op. consolidado",
   ];
@@ -583,6 +595,7 @@ function exportarExcelCC(resultado) {
     "Cantidad",
     "Precio",
     "Importe (costo origen)",
+    "Moneda original de la op.",
     "Resultado PEPS (ventas)",
     "Gasto op. consolidado",
   ];
@@ -594,6 +607,7 @@ function exportarExcelCC(resultado) {
     "Cantidad restante",
     "Valor unitario (PEPS)",
     "Costo Histórico",
+    "Moneda original de la op.",
   ];
   const filasPend = (resultado.lotesPendientes || []).map((p) => [
     p.ticker,
@@ -601,6 +615,7 @@ function exportarExcelCC(resultado) {
     p.cantidad,
     p.valorUnitario,
     p.costoRemanente,
+    monedaOriginalCelda({ moneda: p.monedaOrigen }),
   ]);
 
   const wsRes = XLSX.utils.aoa_to_sheet(resumen);

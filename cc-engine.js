@@ -726,6 +726,7 @@ export function procesarCuentaComitente(tenenciasLotes, movimientos) {
         totalCost: costo,
         fechaConcOrigen: m.fechaConc,
         filaExcelOrigen: m.filaExcel,
+        monedaOrigen: m.moneda,
       });
       detalleMovs.push({
         ...m,
@@ -778,6 +779,7 @@ export function procesarCuentaComitente(tenenciasLotes, movimientos) {
         costoRemanente: lot.totalCost,
         fechaConcOrigen: lot.fechaConcOrigen ?? null,
         filaExcelOrigen: lot.filaExcelOrigen ?? null,
+        monedaOrigen: lot.monedaOrigen ?? null,
       });
     }
   }
