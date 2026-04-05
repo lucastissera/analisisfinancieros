@@ -360,8 +360,13 @@ export function consolidarMovimientosAccionesMismoCodigoOperacion(movimientos) {
  */
 export function clasificarFlujoCaja(descripcion) {
   const d = String(descripcion || "").toUpperCase();
-  if (d.includes("APCOLFUT")) return "suscripcion_caucion_colocadora";
-  if (d.includes("APCOLCON")) return "rescate_caucion_colocadora";
+  /* Colocadora: en broker, APCOLFUT/APCOLCON se cruzan respecto del sentido contable habitual;
+     importe positivo = cobro, negativo = préstamo de fondos (ver pantalla). */
+  if (d.includes("APCOLFUT")) return "rescate_caucion_colocadora";
+  if (d.includes("APCOLCON")) return "suscripcion_caucion_colocadora";
+  /* Tomadora: ingreso al pedir prestado (CON), egreso al devolver (FUT). */
+  if (d.includes("APTOMCON")) return "pedido_caucion_tomadora";
+  if (d.includes("APTOMFUT")) return "pagado_caucion_tomadora";
   if (d.includes("COBRO")) return "ingresos_cuenta";
   if (d.includes("PAGO")) return "salidas_cuenta";
   return null;
@@ -537,6 +542,8 @@ export function procesarCuentaComitente(tenenciasLotes, movimientos) {
     salidas_cuenta: 0,
     suscripcion_caucion_colocadora: 0,
     rescate_caucion_colocadora: 0,
+    pedido_caucion_tomadora: 0,
+    pagado_caucion_tomadora: 0,
     ingresos_dividendos: 0,
     ingresos_renta: 0,
     ingresos_renta_y_amortizacion: 0,

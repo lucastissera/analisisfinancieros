@@ -244,8 +244,10 @@ function exportarExcelCC(resultado) {
     [],
     ["Ingresos de Dinero en la Cuenta", cf.ingresos_cuenta],
     ["Salidas de Dinero en la Cuenta", cf.salidas_cuenta],
-    ["Suscripción Caución Colocadora", cf.suscripcion_caucion_colocadora],
-    ["Rescate Caución Colocadora", cf.rescate_caucion_colocadora],
+    ["Cobrado Caución Colocadora", cf.rescate_caucion_colocadora],
+    ["Prestado Caución Colocadora", cf.suscripcion_caucion_colocadora],
+    ["Pedido Caución Tomadora", cf.pedido_caucion_tomadora ?? 0],
+    ["Pagado Caución Tomadora", cf.pagado_caucion_tomadora ?? 0],
     ["Dividendos en efectivo (sin PEPS)", cf.ingresos_dividendos ?? 0],
     ["Renta (sin PEPS)", cf.ingresos_renta ?? 0],
     ["Renta y amortización (sin PEPS)", cf.ingresos_renta_y_amortizacion ?? 0],
@@ -423,8 +425,10 @@ async function ejecutarAnalisisCC() {
   const cf = resultado.cashFlows;
   $("ccIngresos").textContent = fmtNum(cf.ingresos_cuenta, 2);
   $("ccSalidas").textContent = fmtNum(cf.salidas_cuenta, 2);
-  $("ccApcolfut").textContent = fmtNum(cf.suscripcion_caucion_colocadora, 2);
-  $("ccApcolcon").textContent = fmtNum(cf.rescate_caucion_colocadora, 2);
+  $("ccApcolfut").textContent = fmtNum(cf.rescate_caucion_colocadora, 2);
+  $("ccApcolcon").textContent = fmtNum(cf.suscripcion_caucion_colocadora, 2);
+  $("ccAptomcon").textContent = fmtNum(cf.pedido_caucion_tomadora ?? 0, 2);
+  $("ccAptomfut").textContent = fmtNum(cf.pagado_caucion_tomadora ?? 0, 2);
   $("ccDivEfec").textContent = fmtNum(cf.ingresos_dividendos ?? 0, 2);
   $("ccRenta").textContent = fmtNum(cf.ingresos_renta ?? 0, 2);
   $("ccRentaAmort").textContent = fmtNum(cf.ingresos_renta_y_amortizacion ?? 0, 2);
