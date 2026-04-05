@@ -53,16 +53,32 @@ export function normalizarTextoComparacion(s) {
 }
 
 /**
+ * Palabra "renta" como término (evita RENTABILIDAD, etc.).
+ */
+function tienePalabraRenta(dNormalizado) {
+  return /\bRENTA\b/.test(dNormalizado);
+}
+
+/**
+ * Raíz amortización / amortizaciones (texto ya normalizado sin tildes).
+ */
+function tienePalabraAmortizacion(dNormalizado) {
+  return dNormalizado.includes("AMORTIZACION");
+}
+
+/**
  * Ingresos sobre el título sin PEPS (cantidad 0).
- * Orden: "Renta y Amortización" antes que "Amortización" sola, y esta antes que "Renta" suelta.
- * @returns {'dividendo'|'renta'|'renta_amortizacion'|null}
+ * Criterio: presencia de palabras renta y/o amortización en la descripción.
+ * @returns {'dividendo'|'renta'|'renta_y_amortizacion'|'amortizacion'|null}
  */
 export function clasificarIngresoTituloSinPeps(descripcion) {
   const d = normalizarTextoComparacion(descripcion);
   if (d.includes("DIVIDENDO EN EFECTIVO")) return "dividendo";
-  if (d.includes("RENTA Y AMORTIZACION")) return "renta_amortizacion";
-  if (d.includes("AMORTIZACION")) return "renta_amortizacion";
-  if (d.includes("RENTA")) return "renta";
+  const tr = tienePalabraRenta(d);
+  const ta = tienePalabraAmortizacion(d);
+  if (tr && ta) return "renta_y_amortizacion";
+  if (ta) return "amortizacion";
+  if (tr) return "renta";
   return null;
 }
 
@@ -608,6 +624,7 @@ export function procesarCuentaComitente(tenenciasLotes, movimientos) {
     ingresos_dividendos: 0,
     ingresos_renta: 0,
     ingresos_renta_y_amortizacion: 0,
+    ingresos_amortizacion: 0,
     gastos_operacion_broker: gastosOperacionBroker,
     gastos_iva_correccion_descubierto: 0,
     impuestos_y_retenciones: 0,
@@ -671,10 +688,12 @@ export function procesarCuentaComitente(tenenciasLotes, movimientos) {
       const bucket = clasificarIngresoTituloSinPeps(m.descripcion);
       if (bucket === "dividendo") {
         cashFlows.ingresos_dividendos += imp;
+      } else if (bucket === "renta_y_amortizacion") {
+        cashFlows.ingresos_renta_y_amortizacion += imp;
+      } else if (bucket === "amortizacion") {
+        cashFlows.ingresos_amortizacion += imp;
       } else if (bucket === "renta") {
         cashFlows.ingresos_renta += imp;
-      } else if (bucket === "renta_amortizacion") {
-        cashFlows.ingresos_renta_y_amortizacion += imp;
       }
       detalleMovs.push({
         ...m,

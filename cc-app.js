@@ -300,7 +300,8 @@ function etiquetaRubroTipoLinea(tipoLinea) {
     pagado_caucion_tomadora: "Pagado caución tomadora",
     ingreso_dividendo: "Dividendos en efectivo (sin PEPS)",
     ingreso_renta: "Renta (sin PEPS)",
-    ingreso_renta_amortizacion: "Renta y amortización (sin PEPS)",
+    ingreso_renta_y_amortizacion: "Renta y amortización",
+    ingreso_amortizacion: "Amortización",
     sin_clasificar: "Sin clasificar",
     concepto_a_definir: "Concepto a definir",
     sin_linea: "Sin tipo de línea",
@@ -449,12 +450,16 @@ function movimientosAgrupadosPorClase(detalle, clase) {
           d.tipoLinea === "impuestos_y_retenciones"
       );
       break;
-    case "renta_amort":
+    case "renta_y_amortizacion_excel":
       rows = detalle.filter(
-        (d) =>
-          d.tipoLinea === "ingreso_renta" ||
-          d.tipoLinea === "ingreso_renta_amortizacion"
+        (d) => d.tipoLinea === "ingreso_renta_y_amortizacion"
       );
+      break;
+    case "renta_sin_peps":
+      rows = detalle.filter((d) => d.tipoLinea === "ingreso_renta");
+      break;
+    case "amortizacion_sin_renta":
+      rows = detalle.filter((d) => d.tipoLinea === "ingreso_amortizacion");
       break;
     case "dividendos":
       rows = detalle.filter((d) => d.tipoLinea === "ingreso_dividendo");
@@ -528,8 +533,9 @@ function exportarExcelCC(resultado) {
     ["Pedido Caución Tomadora", cf.pedido_caucion_tomadora ?? 0],
     ["Pagado Caución Tomadora", cf.pagado_caucion_tomadora ?? 0],
     ["Dividendos en efectivo (sin PEPS)", cf.ingresos_dividendos ?? 0],
+    ["Renta y amortización", cf.ingresos_renta_y_amortizacion ?? 0],
     ["Renta (sin PEPS)", cf.ingresos_renta ?? 0],
-    ["Renta y amortización (sin PEPS)", cf.ingresos_renta_y_amortizacion ?? 0],
+    ["Amortización", cf.ingresos_amortizacion ?? 0],
     [
       "Gastos de operación (mismo código, fila secundaria)",
       cf.gastos_operacion_broker ?? 0,
@@ -662,7 +668,9 @@ function exportarExcelCC(resultado) {
     ["Corporativos", "peps_corporativos", null],
     ["Bonos", "peps_bonos", null],
     ["Gastos", "gastos", null],
-    ["Renta y amortización", "renta_amort", null],
+    ["Renta y amortización", "renta_y_amortizacion_excel", null],
+    ["Renta (sin PEPS)", "renta_sin_peps", null],
+    ["Amortizacion", "amortizacion_sin_renta", null],
     ["Dividendos", "dividendos", null],
   ];
   for (const [titulo, clase, nombreHoja] of hojasAgrupadas) {
@@ -805,8 +813,9 @@ async function ejecutarAnalisisCC() {
   $("ccAptomcon").textContent = fmtNum(cf.pedido_caucion_tomadora ?? 0, 2);
   $("ccAptomfut").textContent = fmtNum(cf.pagado_caucion_tomadora ?? 0, 2);
   $("ccDivEfec").textContent = fmtNum(cf.ingresos_dividendos ?? 0, 2);
+  $("ccRentaYAmort").textContent = fmtNum(cf.ingresos_renta_y_amortizacion ?? 0, 2);
   $("ccRenta").textContent = fmtNum(cf.ingresos_renta ?? 0, 2);
-  $("ccRentaAmort").textContent = fmtNum(cf.ingresos_renta_y_amortizacion ?? 0, 2);
+  $("ccAmortizacion").textContent = fmtNum(cf.ingresos_amortizacion ?? 0, 2);
   $("ccGastosOp").textContent = fmtNum(cf.gastos_operacion_broker ?? 0, 2);
   $("ccGastosIvaDesc").textContent = fmtNum(cf.gastos_iva_correccion_descubierto ?? 0, 2);
   $("ccImpuestosRet").textContent = fmtNum(cf.impuestos_y_retenciones ?? 0, 2);

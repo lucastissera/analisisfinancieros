@@ -9,11 +9,14 @@ import { tipoCambioLado, normalizarTextoComparacion } from "./cc-engine.js";
 /** Columna H → categoría de moneda de la fila */
 export function normalizarMonedaColumna(h) {
   const s = normalizarTextoComparacion(String(h ?? ""));
+  /* Dólar cable / CCL / C.V. 7000 / dólar cable: un solo criterio (tipo CV7000 / MEP proxy). */
   if (
     s.includes("CV") ||
     s.includes("7000") ||
     s.includes("C.V") ||
-    (s.includes("CABLE") && s.includes("DOL"))
+    s.includes("CCL") ||
+    (s.includes("CABLE") && (s.includes("DOL") || s.includes("DOLAR"))) ||
+    (s.includes("DOLAR") && s.includes("CABLE"))
   ) {
     return "CV7000";
   }
