@@ -229,6 +229,133 @@ export function interpretarFilaMovimientoExcel(row, filaExcel) {
 }
 
 /**
+ * Código de operación en la descripción (brokers suelen repetir el mismo en líneas partidas costo/gastos).
+ * Si no hay patrón reconocido, devuelve null (no se consolida por código).
+ */
+export function extraerCodigoOperacionDescripcion(descripcion) {
+  const raw = String(descripcion || "");
+  const d = normalizarDescUpper(raw);
+  const patterns = [
+    /(?:OP(?:ERACION)?|OPER\.?)\s*[Nº°]?\s*[:\s-]*(\d{4,})/i,
+    /(?:COD(?:IGO)?)\s*[:\s-]*(\d{4,})/i,
+    /COD\.?\s*OP\.?\s*[:\s-]*(\d{4,})/i,
+    /(?:N[º°])\s*[:\s]*(\d{4,})/i,
+  ];
+  for (const p of patterns) {
+    const m = raw.match(p) || d.match(p);
+    if (m && m[1]) return m[1];
+  }
+  const m2 = d.match(/\b(\d{6,})\b/);
+  if (m2) return m2[1];
+  return null;
+}
+
+/** Acciones, CEDEAR o Corporativos con cantidad ≠ 0: aplica regla costo vs gastos por mismo código de operación. */
+export function aplicaConsolidacionCodigoOperacion(tipoInstrumento, cantidad) {
+  const c0 = cantidad == null || Math.abs(cantidad) < 1e-9;
+  if (c0) return false;
+  const t = normalizarDescUpper(String(tipoInstrumento ?? "").trim());
+  if (t.includes("ACCION")) return true;
+  if (t.includes("CEDEAR")) return true;
+  if (t === "CORPORATIVOS") return true;
+  return false;
+}
+
+function claveGrupoOperacionCodigo(m, codOp) {
+  const t = m.fechaConc instanceof Date ? m.fechaConc.getTime() : 0;
+  const tick = String(m.ticker || "").toUpperCase().trim();
+  const qty = m.cantidad != null ? m.cantidad : 0;
+  const lado = esCompra(m) ? "C" : "V";
+  return `${t}|${tick}|${qty}|${codOp}|${lado}`;
+}
+
+/**
+ * Mismo día, mismo ticker, misma cantidad (signo), mismo código de operación en descripción:
+ * se trata de una sola operación partida (principal + gastos). Se conserva la fila de mayor |importe|
+ * (moneda del informe ya aplicada) y el resto se suma a gastos de operación.
+ * @returns {{ movimientos: Array, gastosOperacionBroker: number }}
+ */
+export function consolidarMovimientosAccionesMismoCodigoOperacion(movimientos) {
+  const n = movimientos.length;
+  const indicesByKey = new Map();
+  for (let i = 0; i < n; i++) {
+    const m = movimientos[i];
+    if (!m.ticker) continue;
+    if (!aplicaConsolidacionCodigoOperacion(m.tipoInstrumento, m.cantidad)) continue;
+    const cod = extraerCodigoOperacionDescripcion(m.descripcion);
+    if (cod == null) continue;
+    const key = claveGrupoOperacionCodigo(m, cod);
+    if (!indicesByKey.has(key)) indicesByKey.set(key, []);
+    indicesByKey.get(key).push(i);
+  }
+
+  /** @type {Map<number, object>} principal index → fila fusionada */
+  const principalAMerged = new Map();
+  /** @type {Set<number>} índices que se absorben (no van al resultado) */
+  const skipIndices = new Set();
+  let gastosOperacionBroker = 0;
+
+  for (const idxs of indicesByKey.values()) {
+    if (idxs.length < 2) continue;
+    let principalIdx = idxs[0];
+    let maxAbs = -1;
+    for (const i of idxs) {
+      const imp = movimientos[i].importe;
+      const a = imp != null && Number.isFinite(imp) ? Math.abs(imp) : 0;
+      const fi = movimientos[i].filaExcel ?? i;
+      const fp = movimientos[principalIdx].filaExcel ?? principalIdx;
+      if (a > maxAbs + 1e-9) {
+        maxAbs = a;
+        principalIdx = i;
+      } else if (Math.abs(a - maxAbs) < 1e-9 && fi < fp) {
+        principalIdx = i;
+      }
+    }
+    let gastoGrupo = 0;
+    for (const i of idxs) {
+      if (i === principalIdx) continue;
+      const imp = movimientos[i].importe;
+      if (imp != null && Number.isFinite(imp)) gastoGrupo += Math.abs(imp);
+      skipIndices.add(i);
+    }
+    gastosOperacionBroker += gastoGrupo;
+
+    const base = movimientos[principalIdx];
+    const qtyAbs =
+      base.cantidad != null ? Math.abs(base.cantidad) : 0;
+    const impP = base.importe;
+    const precioNuevo =
+      qtyAbs > 1e-12 && impP != null && Number.isFinite(impP)
+        ? Math.abs(impP) / qtyAbs
+        : base.precio;
+    const filasConsolidadas = idxs
+      .map((i) => movimientos[i].filaExcel)
+      .filter((x) => x != null)
+      .sort((a, b) => a - b);
+
+    principalAMerged.set(principalIdx, {
+      ...base,
+      importe: impP,
+      precio: precioNuevo,
+      filasConsolidadas,
+      gastoOperacionAsociado: gastoGrupo,
+    });
+  }
+
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    if (skipIndices.has(i)) continue;
+    if (principalAMerged.has(i)) {
+      out.push(principalAMerged.get(i));
+      continue;
+    }
+    out.push(movimientos[i]);
+  }
+
+  return { movimientos: out, gastosOperacionBroker };
+}
+
+/**
  * Sin ticker: clasificar por descripción (orden: caución antes que cobro/pago genéricos).
  */
 export function clasificarFlujoCaja(descripcion) {
@@ -386,7 +513,9 @@ export function prepararMovimientosIntercaladosCedears(movimientos) {
  * @param {Array} movimientos parseados
  */
 export function procesarCuentaComitente(tenenciasLotes, movimientos) {
-  movimientos = prepararMovimientosIntercaladosCedears(movimientos);
+  const { movimientos: movs, gastosOperacionBroker } =
+    consolidarMovimientosAccionesMismoCodigoOperacion(movimientos);
+  movimientos = prepararMovimientosIntercaladosCedears(movs);
   /** ticker -> cola de lotes { qty, totalCost } */
   const porTicker = new Map();
 
@@ -411,6 +540,7 @@ export function procesarCuentaComitente(tenenciasLotes, movimientos) {
     ingresos_dividendos: 0,
     ingresos_renta: 0,
     ingresos_renta_y_amortizacion: 0,
+    gastos_operacion_broker: gastosOperacionBroker,
   };
 
   const detalleMovs = [];

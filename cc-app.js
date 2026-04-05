@@ -249,6 +249,10 @@ function exportarExcelCC(resultado) {
     ["Dividendos en efectivo (sin PEPS)", cf.ingresos_dividendos ?? 0],
     ["Renta (sin PEPS)", cf.ingresos_renta ?? 0],
     ["Renta y amortización (sin PEPS)", cf.ingresos_renta_y_amortizacion ?? 0],
+    [
+      "Gastos de operación (mismo código, fila secundaria)",
+      cf.gastos_operacion_broker ?? 0,
+    ],
     [],
     ["Resultado ejercicio (realizado ventas vs costo PEPS)", resultado.resultadoEjercicio],
     [],
@@ -263,6 +267,7 @@ function exportarExcelCC(resultado) {
     "Precio",
     "Importe",
     "Resultado PEPS (ventas)",
+    "Gasto op. consolidado",
   ];
   const filasDet = resultado.detalleMovs.map((d) => [
     fmtFecha(d.fechaConc),
@@ -273,6 +278,9 @@ function exportarExcelCC(resultado) {
     d.precio ?? "",
     d.importe ?? "",
     d.peps?.resultado != null ? d.peps.resultado : "",
+    d.gastoOperacionAsociado != null && Number.isFinite(d.gastoOperacionAsociado)
+      ? d.gastoOperacionAsociado
+      : "",
   ]);
 
   const cabPend = ["Ticker", "Cantidad restante", "Valor unitario (PEPS)", "Costo remanente"];
@@ -420,6 +428,7 @@ async function ejecutarAnalisisCC() {
   $("ccDivEfec").textContent = fmtNum(cf.ingresos_dividendos ?? 0, 2);
   $("ccRenta").textContent = fmtNum(cf.ingresos_renta ?? 0, 2);
   $("ccRentaAmort").textContent = fmtNum(cf.ingresos_renta_y_amortizacion ?? 0, 2);
+  $("ccGastosOp").textContent = fmtNum(cf.gastos_operacion_broker ?? 0, 2);
   $("ccResEjercicio").textContent = fmtNum(resultado.resultadoEjercicio, 2);
 
   const resumenMon = $("ccMonedaInformeResumen");
