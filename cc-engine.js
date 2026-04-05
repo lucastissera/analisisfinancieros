@@ -491,6 +491,12 @@ function montoOperacion(m) {
   return 0;
 }
 
+/** Hay importe de operación distinto de cero (si es 0 o ausente, puede usarse precio × cantidad). */
+function importeOperacionRelevante(m) {
+  const imp = m.importe;
+  return imp != null && Number.isFinite(imp) && Math.abs(imp) > 1e-9;
+}
+
 function cmpFechaConcertacionFila(a, b) {
   const t = a.fechaConc - b.fechaConc;
   if (t !== 0) return t;
@@ -692,7 +698,10 @@ export function procesarCuentaComitente(tenenciasLotes, movimientos) {
         });
         continue;
       }
-      const costo = m.importe != null ? Math.abs(m.importe) : qty * (m.precio != null ? Math.abs(m.precio) : 0);
+      const pu = m.precio != null ? Math.abs(m.precio) : 0;
+      const costo = importeOperacionRelevante(m)
+        ? Math.abs(m.importe)
+        : qty * pu;
       cola.push({ qty, totalCost: costo });
       detalleMovs.push({
         ...m,

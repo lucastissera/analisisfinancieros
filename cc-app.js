@@ -5,6 +5,7 @@ import {
   interpretarFilaMovimientoExcel,
   tipoCambioLado,
   normalizarTextoComparacion,
+  esTipoCorporativos,
 } from "./cc-engine.js";
 import {
   fechaIsoLocal,
@@ -296,6 +297,82 @@ function nombreHojaExcelUnico(label, usados) {
   return n;
 }
 
+const TIPOS_LINEA_CAUCION = new Set([
+  "rescate_caucion_colocadora",
+  "suscripcion_caucion_colocadora",
+  "pedido_caucion_tomadora",
+  "pagado_caucion_tomadora",
+]);
+
+function esAccionOCedear(tipoInstrumento) {
+  const t = normalizarTextoComparacion(String(tipoInstrumento ?? "").trim());
+  if (t.includes("CORPORATIVOS")) return false;
+  return t.includes("ACCION") || t.includes("CEDEAR");
+}
+
+function ordenarDetalleMovs(dets) {
+  return [...dets].sort((a, b) => {
+    const tf = a.fechaConc - b.fechaConc;
+    if (tf !== 0) return tf;
+    return (a.filaExcel ?? 0) - (b.filaExcel ?? 0);
+  });
+}
+
+function movimientosAgrupadosPorClase(detalle, clase) {
+  let rows;
+  switch (clase) {
+    case "cauciones":
+      rows = detalle.filter((d) => TIPOS_LINEA_CAUCION.has(d.tipoLinea));
+      break;
+    case "corporativos":
+      rows = detalle.filter((d) => esTipoCorporativos(d.tipoInstrumento));
+      break;
+    case "acciones":
+      rows = detalle.filter(
+        (d) => Boolean(d.ticker) && esAccionOCedear(d.tipoInstrumento)
+      );
+      break;
+    case "gastos":
+      rows = detalle.filter(
+        (d) =>
+          d.tipoLinea === "gasto_iva_o_descubierto" ||
+          d.tipoLinea === "impuestos_y_retenciones"
+      );
+      break;
+    case "renta_amort":
+      rows = detalle.filter(
+        (d) =>
+          d.tipoLinea === "ingreso_renta" ||
+          d.tipoLinea === "ingreso_renta_amortizacion"
+      );
+      break;
+    case "dividendos":
+      rows = detalle.filter((d) => d.tipoLinea === "ingreso_dividendo");
+      break;
+    default:
+      rows = [];
+  }
+  return ordenarDetalleMovs(rows);
+}
+
+function appendHojaAgrupadaClase(wb, XLSX, titulo, cabDet, rows, filaFn, nombresReservados) {
+  let sumImp = 0;
+  for (const d of rows) {
+    const imp = d.importe;
+    if (imp != null && Number.isFinite(imp)) sumImp += imp;
+  }
+  const aoa = [
+    [titulo],
+    ["Total importe (suma algebraica)", sumImp],
+    [],
+    cabDet,
+    ...rows.map((d) => filaFn(d)),
+  ];
+  const nombre = nombreHojaExcelUnico(titulo, nombresReservados);
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  XLSX.utils.book_append_sheet(wb, ws, nombre);
+}
+
 function exportarExcelCC(resultado) {
   const XLSX = window.XLSX;
   const cf = resultado.cashFlows;
@@ -359,7 +436,12 @@ function exportarExcelCC(resultado) {
   ];
   const filasDet = resultado.detalleMovs.map((d) => filaDetalleMovimientoExcel(d));
 
-  const cabPend = ["Ticker", "Cantidad restante", "Valor unitario (PEPS)", "Costo remanente"];
+  const cabPend = [
+    "Ticker",
+    "Cantidad restante",
+    "Valor unitario (PEPS)",
+    "Costo Histórico Promedio",
+  ];
   const filasPend = (resultado.lotesPendientes || []).map((p) => [
     p.ticker,
     p.cantidad,
@@ -379,13 +461,13 @@ function exportarExcelCC(resultado) {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, wsRes, "Resumen");
   XLSX.utils.book_append_sheet(wb, wsDet, "Detalle movimientos");
-  XLSX.utils.book_append_sheet(wb, wsPend, "Lotes pendientes");
+  XLSX.utils.book_append_sheet(wb, wsPend, "Activos en tenencia");
   XLSX.utils.book_append_sheet(wb, wsOrigen, "Origen importado");
 
   const nombresReservados = new Set([
     "Resumen",
     "Detalle movimientos",
-    "Lotes pendientes",
+    "Activos en tenencia",
     "Origen importado",
   ]);
   const porTipo = new Map();
@@ -426,6 +508,27 @@ function exportarExcelCC(resultado) {
     const nombreHojaConcepto = nombreHojaExcelUnico(label, nombresReservados);
     const wsConcepto = XLSX.utils.aoa_to_sheet(aoaConcepto);
     XLSX.utils.book_append_sheet(wb, wsConcepto, nombreHojaConcepto);
+  }
+
+  const hojasAgrupadas = [
+    ["Cauciones", "cauciones"],
+    ["Corporativos", "corporativos"],
+    ["Acciones", "acciones"],
+    ["Gastos", "gastos"],
+    ["Renta y amortización", "renta_amort"],
+    ["Dividendos", "dividendos"],
+  ];
+  for (const [titulo, clase] of hojasAgrupadas) {
+    const rowsAgr = movimientosAgrupadosPorClase(resultado.detalleMovs, clase);
+    appendHojaAgrupadaClase(
+      wb,
+      XLSX,
+      titulo,
+      cabDet,
+      rowsAgr,
+      filaDetalleMovimientoExcel,
+      nombresReservados
+    );
   }
 
   const base = ultimoNombreMovs.replace(/\.[^.]+$/, "");
