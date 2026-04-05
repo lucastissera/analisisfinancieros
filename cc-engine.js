@@ -40,11 +40,16 @@ function excelDateToDate(v) {
   return null;
 }
 
-function normalizarDescUpper(s) {
-  return String(s || "")
-    .toUpperCase()
+/**
+ * Normaliza texto para comparar: sin distinguir mayúsculas/minúsculas ni tildes (Unicode NFD).
+ * Equivalente a comparar "RÉNTA", "renta", "ReNtA", etc.
+ */
+export function normalizarTextoComparacion(s) {
+  return String(s ?? "")
+    .trim()
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase();
 }
 
 /**
@@ -53,7 +58,7 @@ function normalizarDescUpper(s) {
  * @returns {'dividendo'|'renta'|'renta_amortizacion'|null}
  */
 export function clasificarIngresoTituloSinPeps(descripcion) {
-  const d = normalizarDescUpper(descripcion);
+  const d = normalizarTextoComparacion(descripcion);
   if (d.includes("DIVIDENDO EN EFECTIVO")) return "dividendo";
   if (d.includes("RENTA Y AMORTIZACION")) return "renta_amortizacion";
   if (d.includes("AMORTIZACION")) return "renta_amortizacion";
@@ -67,13 +72,51 @@ export function esIngresoTituloSinPeps(descripcion) {
 
 /** Oferta de canje / oferta temprana de canje (instrumentos corporativos). */
 export function esOfertaCanje(descripcion) {
-  const d = normalizarDescUpper(descripcion);
+  const d = normalizarTextoComparacion(descripcion);
   return d.includes("OFERTA") && d.includes("CANJE");
+}
+
+/** Corrección IVA o cargo por descubierto: se imputan como gasto (no PEPS). */
+export function esGastoCorreccionIvaODescubierto(descripcion) {
+  const d = normalizarTextoComparacion(descripcion);
+  if (d.includes("CORRECCION IVA")) return true;
+  if (d.includes("CARGO POR DESCUBIERTO")) return true;
+  return false;
+}
+
+/**
+ * IIGG y equivalentes (texto ya normalizado: sin tildes, mayúsculas).
+ * Cubre: IIGG, «impuesto a las ganancias», «impuesto» + «ganancias», o la palabra «ganancias» sola.
+ */
+function esAlcanceImpuestoGanancias(d) {
+  if (d.includes("IIGG")) return true;
+  if (d.includes("GANANCIAS")) return true;
+  return false;
+}
+
+/**
+ * BBPP y equivalentes (texto ya normalizado).
+ * Cubre: BBPP, «impuesto bienes personales», «impuesto a los bienes personales», «bienes personales».
+ */
+function esAlcanceImpuestoBienesPersonales(d) {
+  if (d.includes("BBPP")) return true;
+  if (d.includes("BIENES PERSONALES")) return true;
+  return false;
+}
+
+/** Retención, percepción, IIGG/ganancias, BBPP/bienes personales: rubro Impuestos y retenciones (no PEPS). */
+export function esImpuestoRetencion(descripcion) {
+  const d = normalizarTextoComparacion(descripcion);
+  if (d.includes("RETENCION")) return true;
+  if (d.includes("PERCEPCION")) return true;
+  if (esAlcanceImpuestoGanancias(d)) return true;
+  if (esAlcanceImpuestoBienesPersonales(d)) return true;
+  return false;
 }
 
 /** Tipo de instrumento (columna D) = Corporativos: fuera del PEPS en este análisis. */
 export function esTipoCorporativos(tipoInstrumento) {
-  const t = normalizarDescUpper(String(tipoInstrumento ?? "").trim());
+  const t = normalizarTextoComparacion(String(tipoInstrumento ?? "").trim());
   return t === "CORPORATIVOS";
 }
 
@@ -99,7 +142,7 @@ export function parsearTenenciasInicialesExcel(filas) {
       throw new Error(`Tenencias fila ${r + 2}: precio unitario inválido (columna C).`);
     }
     lotes.push({
-      ticker: tick.toUpperCase(),
+      ticker: normalizarTextoComparacion(tick),
       cantidad: cantAbs,
       precioUnitario: pu,
       totalCost: cantAbs * pu,
@@ -146,16 +189,22 @@ export function parsearMovimientosExcel(filas) {
     const cantidadCero =
       cantidad == null || Math.abs(Number(cantidad) || 0) < 1e-9;
 
-    if (ticker && cantidadCero && !esIngresoTituloSinPeps(descripcion)) {
+    if (
+      ticker &&
+      cantidadCero &&
+      !esIngresoTituloSinPeps(descripcion) &&
+      !esGastoCorreccionIvaODescubierto(descripcion) &&
+      !esImpuestoRetencion(descripcion)
+    ) {
       throw new Error(
-        `Movimientos fila ${r + 2}: con Ticker (C) y cantidad 0 (E), la descripción debe indicar Dividendo en efectivo, Renta, Renta y Amortización o Amortización (ingresos sin PEPS).`
+        `Movimientos fila ${r + 2}: con Ticker (C) y cantidad 0 (E), la descripción debe indicar Dividendo en efectivo, Renta, Renta y Amortización, Amortización, Corrección IVA, Cargo por Descubierto, Impuestos/retenciones (retención, percepción, IIGG/ganancias, BBPP/bienes personales) u otro ingreso/gasto sin PEPS reconocido.`
       );
     }
 
     ops.push({
       fechaConc,
       descripcion,
-      ticker: ticker ? ticker.toUpperCase() : "",
+      ticker: ticker ? normalizarTextoComparacion(ticker) : "",
       tipoInstrumento,
       cantidad,
       precio,
@@ -210,14 +259,20 @@ export function interpretarFilaMovimientoExcel(row, filaExcel) {
   const cantidadCero =
     cantidad == null || Math.abs(Number(cantidad) || 0) < 1e-9;
 
-  if (ticker && cantidadCero && !esIngresoTituloSinPeps(descripcion)) {
+  if (
+    ticker &&
+    cantidadCero &&
+    !esIngresoTituloSinPeps(descripcion) &&
+    !esGastoCorreccionIvaODescubierto(descripcion) &&
+    !esImpuestoRetencion(descripcion)
+  ) {
     return null;
   }
 
   return {
     fechaConc,
     descripcion,
-    ticker: ticker ? ticker.toUpperCase() : "",
+    ticker: ticker ? normalizarTextoComparacion(ticker) : "",
     tipoInstrumento,
     cantidad,
     precio,
@@ -234,7 +289,7 @@ export function interpretarFilaMovimientoExcel(row, filaExcel) {
  */
 export function extraerCodigoOperacionDescripcion(descripcion) {
   const raw = String(descripcion || "");
-  const d = normalizarDescUpper(raw);
+  const d = normalizarTextoComparacion(raw);
   const patterns = [
     /(?:OP(?:ERACION)?|OPER\.?)\s*[Nº°]?\s*[:\s-]*(\d{4,})/i,
     /(?:COD(?:IGO)?)\s*[:\s-]*(\d{4,})/i,
@@ -254,7 +309,7 @@ export function extraerCodigoOperacionDescripcion(descripcion) {
 export function aplicaConsolidacionCodigoOperacion(tipoInstrumento, cantidad) {
   const c0 = cantidad == null || Math.abs(cantidad) < 1e-9;
   if (c0) return false;
-  const t = normalizarDescUpper(String(tipoInstrumento ?? "").trim());
+  const t = normalizarTextoComparacion(String(tipoInstrumento ?? "").trim());
   if (t.includes("ACCION")) return true;
   if (t.includes("CEDEAR")) return true;
   if (t === "CORPORATIVOS") return true;
@@ -263,7 +318,7 @@ export function aplicaConsolidacionCodigoOperacion(tipoInstrumento, cantidad) {
 
 function claveGrupoOperacionCodigo(m, codOp) {
   const t = m.fechaConc instanceof Date ? m.fechaConc.getTime() : 0;
-  const tick = String(m.ticker || "").toUpperCase().trim();
+  const tick = normalizarTextoComparacion(m.ticker || "");
   const qty = m.cantidad != null ? m.cantidad : 0;
   const lado = esCompra(m) ? "C" : "V";
   return `${t}|${tick}|${qty}|${codOp}|${lado}`;
@@ -359,7 +414,7 @@ export function consolidarMovimientosAccionesMismoCodigoOperacion(movimientos) {
  * Sin ticker: clasificar por descripción (orden: caución antes que cobro/pago genéricos).
  */
 export function clasificarFlujoCaja(descripcion) {
-  const d = String(descripcion || "").toUpperCase();
+  const d = normalizarTextoComparacion(descripcion);
   /* Colocadora: en broker, APCOLFUT/APCOLCON se cruzan respecto del sentido contable habitual;
      importe positivo = cobro, negativo = préstamo de fondos (ver pantalla). */
   if (d.includes("APCOLFUT")) return "rescate_caucion_colocadora";
@@ -373,10 +428,10 @@ export function clasificarFlujoCaja(descripcion) {
 }
 
 function esCompra(m) {
-  const d = normalizarDescUpper(String(m.descripcion || ""));
+  const d = normalizarTextoComparacion(String(m.descripcion || ""));
   if (d.includes("TRANSFERENCIA") && d.includes("EXTERNA")) {
-    if (d.includes("CREDITO") || d.includes("CRÉDITO")) return true;
-    if (d.includes("DEBITO") || d.includes("DÉBITO")) return false;
+    if (d.includes("CREDITO")) return true;
+    if (d.includes("DEBITO")) return false;
   }
   if (esOfertaCanje(m.descripcion)) {
     const c = m.cantidad;
@@ -404,7 +459,7 @@ function esCompra(m) {
  */
 export function tipoCambioLado(m) {
   const imp = m.importe;
-  const tick = String(m.ticker || "").trim();
+  const tick = normalizarTextoComparacion(m.ticker || "");
 
   if (!tick) {
     if (imp != null && imp > 0) return "vendedor";
@@ -412,10 +467,10 @@ export function tipoCambioLado(m) {
     return "mid";
   }
 
-  const d = normalizarDescUpper(String(m.descripcion || ""));
+  const d = normalizarTextoComparacion(String(m.descripcion || ""));
   if (d.includes("TRANSFERENCIA") && d.includes("EXTERNA")) {
-    if (d.includes("CREDITO") || d.includes("CRÉDITO")) return "vendedor";
-    if (d.includes("DEBITO") || d.includes("DÉBITO")) return "comprador";
+    if (d.includes("CREDITO")) return "vendedor";
+    if (d.includes("DEBITO")) return "comprador";
   }
 
   const cantCero = m.cantidad == null || Math.abs(m.cantidad) < 1e-9;
@@ -530,7 +585,7 @@ export function procesarCuentaComitente(tenenciasLotes, movimientos) {
   }
 
   for (const t of tenenciasLotes) {
-    const tick = String(t.ticker || "").toUpperCase().trim();
+    const tick = normalizarTextoComparacion(t.ticker || "");
     if (!tick || t.cantidad <= 0) continue;
     const qty = t.cantidad;
     const tc = t.totalCost != null ? t.totalCost : qty * (t.precioUnitario || 0);
@@ -548,6 +603,9 @@ export function procesarCuentaComitente(tenenciasLotes, movimientos) {
     ingresos_renta: 0,
     ingresos_renta_y_amortizacion: 0,
     gastos_operacion_broker: gastosOperacionBroker,
+    gastos_iva_correccion_descubierto: 0,
+    impuestos_y_retenciones: 0,
+    concepto_a_definir: 0,
   };
 
   const detalleMovs = [];
@@ -559,17 +617,46 @@ export function procesarCuentaComitente(tenenciasLotes, movimientos) {
     const cantidadCeroM =
       cantM == null || Math.abs(cantM) < 1e-9;
 
+    if (esGastoCorreccionIvaODescubierto(m.descripcion)) {
+      const imp = m.importe != null ? m.importe : 0;
+      cashFlows.gastos_iva_correccion_descubierto += imp;
+      detalleMovs.push({
+        ...m,
+        tipoLinea: "gasto_iva_o_descubierto",
+        peps: null,
+      });
+      continue;
+    }
+
+    if (esImpuestoRetencion(m.descripcion)) {
+      const imp = m.importe != null ? m.importe : 0;
+      cashFlows.impuestos_y_retenciones += imp;
+      detalleMovs.push({
+        ...m,
+        tipoLinea: "impuestos_y_retenciones",
+        peps: null,
+      });
+      continue;
+    }
+
     if (!tick) {
       const tipo = clasificarFlujoCaja(m.descripcion);
       const imp = m.importe != null ? m.importe : 0;
       if (tipo && cashFlows[tipo] !== undefined) {
         cashFlows[tipo] += imp;
+        detalleMovs.push({
+          ...m,
+          tipoLinea: tipo,
+          peps: null,
+        });
+      } else {
+        cashFlows.concepto_a_definir += imp;
+        detalleMovs.push({
+          ...m,
+          tipoLinea: "concepto_a_definir",
+          peps: null,
+        });
       }
-      detalleMovs.push({
-        ...m,
-        tipoLinea: tipo || "sin_clasificar",
-        peps: null,
-      });
       continue;
     }
 

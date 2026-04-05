@@ -4,18 +4,11 @@
  * AL30C / CV 7000: proxy MEP vía Bluelytics Blue hasta integrar BYMA AL30C.
  */
 
-import { tipoCambioLado } from "./cc-engine.js";
-
-function normalizarDescUpper(s) {
-  return String(s || "")
-    .toUpperCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
-}
+import { tipoCambioLado, normalizarTextoComparacion } from "./cc-engine.js";
 
 /** Columna H → categoría de moneda de la fila */
 export function normalizarMonedaColumna(h) {
-  const s = normalizarDescUpper(String(h ?? ""));
+  const s = normalizarTextoComparacion(String(h ?? ""));
   if (
     s.includes("CV") ||
     s.includes("7000") ||
@@ -37,6 +30,8 @@ export const MONEDA_INFORME = {
   ARS: "ARS",
   USD: "USD",
   CV7000: "CV7000",
+  /** Sin conversión: importes tal como figuran en el archivo (pueden mezclar monedas). */
+  ORIGEN: "ORIGEN",
 };
 
 export function fechaIsoLocal(d) {
@@ -67,6 +62,7 @@ export function convertirImporteAInforme(
   cot,
   lado
 ) {
+  if (monedaInforme === "ORIGEN") return importe;
   if (importe == null || !Number.isFinite(importe)) return importe;
   const bC = cot.bnaComprador;
   const bV = cot.bnaVendedor;
@@ -106,6 +102,7 @@ export function tipoCambioReferenciaUsado(
   cot,
   lado
 ) {
+  if (monedaInforme === "ORIGEN") return null;
   const bC = cot.bnaComprador;
   const bV = cot.bnaVendedor;
   const aC = cot.al30cComprador;
@@ -133,17 +130,35 @@ export function tipoCambioReferenciaUsado(
 
 /**
  * @param {Array} movimientos con monedaNorm en cada fila (opcional; si no, usa normalizarMonedaColumna(m.moneda))
- * @param {'ARS'|'USD'|'CV7000'} monedaInforme
- * @param {Map<string, object>} cotizacionesPorFechaIso Map fecha YYYY-MM-DD → cotizaciones del día
+ * @param {'ARS'|'USD'|'CV7000'|'ORIGEN'} monedaInforme
+ * @param {Map<string, object>|null} cotizacionesPorFechaIso Map fecha YYYY-MM-DD → cotizaciones del día (no usado si monedaInforme es ORIGEN)
  */
 export function aplicarMonedaInformeAMovimientos(
   movimientos,
   monedaInforme,
   cotizacionesPorFechaIso
 ) {
+  if (monedaInforme === "ORIGEN") {
+    return movimientos.map((m) => {
+      const monedaOrigen =
+        m.monedaNorm ?? normalizarMonedaColumna(m.moneda);
+      const imp = m.importe;
+      const pr = m.precio;
+      return {
+        ...m,
+        monedaNorm: monedaOrigen,
+        importeOriginal: imp,
+        precioOriginal: pr,
+        importe: imp,
+        precio: pr,
+        monedaInformeAplicada: "ORIGEN",
+      };
+    });
+  }
+
   return movimientos.map((m) => {
     const iso = fechaIsoLocal(m.fechaConc);
-    const cot = cotizacionesPorFechaIso.get(iso);
+    const cot = cotizacionesPorFechaIso?.get(iso);
     if (!cot) {
       throw new Error(
         `No hay cotización para la fecha ${iso} (concertación). Ampliá el rango de datos o verificá la fecha.`

@@ -4,6 +4,7 @@ import {
   procesarCuentaComitente,
   interpretarFilaMovimientoExcel,
   tipoCambioLado,
+  normalizarTextoComparacion,
 } from "./cc-engine.js";
 import {
   fechaIsoLocal,
@@ -18,7 +19,7 @@ const $ = (id) => document.getElementById(id);
 
 let ultimoResultadoCC = null;
 let ultimoNombreMovs = "movimientos.xlsx";
-/** @type {'ARS'|'USD'|'CV7000'} */
+/** @type {'ARS'|'USD'|'CV7000'|'ORIGEN'} */
 let ultimoMonedaInforme = "ARS";
 /** @type {Map<string, object>|null} */
 let ultimoCotizacionesCC = null;
@@ -26,6 +27,7 @@ let ultimoCotizacionesCC = null;
 let ccAnalisisEnCurso = false;
 
 function etiquetaMonedaInforme(v) {
+  if (v === "ORIGEN") return "Origen del archivo (sin conversión)";
   if (v === "USD") return "Dólares (USD)";
   if (v === "CV7000") return "Dólares C.V. 7000";
   return "Pesos (ARS)";
@@ -144,7 +146,7 @@ function leerTenenciasManuales() {
       throw new Error(`Tenencia inicial fila ${n}: precio unitario inválido (≥ 0).`);
     }
     lotes.push({
-      ticker: ticker.toUpperCase(),
+      ticker: normalizarTextoComparacion(ticker),
       cantidad: cant,
       precioUnitario: pu,
       totalCost: cant * pu,
@@ -199,6 +201,14 @@ function construirHojaOrigenConImporteConvertido(cotMap, monedaInforme) {
     const mov = interpretarFilaMovimientoExcel(row, r + 2);
     let importeConv = "";
     let tcRef = "";
+    if (monedaInforme === "ORIGEN" && mov) {
+      if (mov.importe != null && Number.isFinite(mov.importe)) {
+        importeConv = mov.importe;
+      }
+      tcRef = "(sin conversión)";
+      out.push([...base, importeConv, tcRef]);
+      continue;
+    }
     if (mov && cotMap) {
       const iso = fechaIsoLocal(mov.fechaConc);
       const cot = cotMap.get(iso);
@@ -230,17 +240,81 @@ function construirHojaOrigenConImporteConvertido(cotMap, monedaInforme) {
   return out;
 }
 
+function filaDetalleMovimientoExcel(d) {
+  return [
+    fmtFecha(d.fechaConc),
+    d.ticker || "—",
+    d.descripcion,
+    d.tipoLinea,
+    d.cantidad ?? "",
+    d.precio ?? "",
+    d.importe ?? "",
+    d.peps?.resultado != null ? d.peps.resultado : "",
+    d.gastoOperacionAsociado != null && Number.isFinite(d.gastoOperacionAsociado)
+      ? d.gastoOperacionAsociado
+      : "",
+  ];
+}
+
+function etiquetaRubroTipoLinea(tipoLinea) {
+  const map = {
+    gasto_iva_o_descubierto: "Gasto IVA y descubierto",
+    impuestos_y_retenciones: "Impuestos y retenciones",
+    ingresos_cuenta: "Ingresos de dinero en la cuenta",
+    salidas_cuenta: "Salidas de dinero en la cuenta",
+    suscripcion_caucion_colocadora: "Prestado caución colocadora",
+    rescate_caucion_colocadora: "Cobrado caución colocadora",
+    pedido_caucion_tomadora: "Pedido caución tomadora",
+    pagado_caucion_tomadora: "Pagado caución tomadora",
+    ingreso_dividendo: "Dividendos en efectivo (sin PEPS)",
+    ingreso_renta: "Renta (sin PEPS)",
+    ingreso_renta_amortizacion: "Renta y amortización (sin PEPS)",
+    sin_clasificar: "Sin clasificar",
+    concepto_a_definir: "Concepto a definir",
+    sin_linea: "Sin tipo de línea",
+    compra: "Compras (PEPS)",
+    venta: "Ventas (PEPS)",
+    compra_sin_cantidad: "Compra sin cantidad",
+  };
+  return map[tipoLinea] || tipoLinea.replace(/_/g, " ");
+}
+
+function nombreHojaExcelUnico(label, usados) {
+  let s = String(label || "Rubro")
+    .replace(/[\\/?*[\]:]/g, "-")
+    .trim();
+  if (s.length > 31) s = s.slice(0, 31);
+  let n = s;
+  let i = 2;
+  while (usados.has(n)) {
+    const suf = ` (${i})`;
+    const maxBase = Math.max(0, 31 - suf.length);
+    n = s.slice(0, maxBase) + suf;
+    i++;
+  }
+  usados.add(n);
+  return n;
+}
+
 function exportarExcelCC(resultado) {
   const XLSX = window.XLSX;
   const cf = resultado.cashFlows;
 
+  const notaCotizacion =
+    ultimoMonedaInforme === "ORIGEN"
+      ? [
+          "Nota moneda",
+          "Origen del archivo: no se aplicó tipo de cambio; los totales pueden sumar ARS, USD y C.V. 7000 según cada fila. Adecuado para reclasificar con tus propias cotizaciones.",
+        ]
+      : [
+          "Nota cotizaciones",
+          "BNA y AL30C/MEP proxy vía Bluelytics (evolution.json); no es cotización oficial BYMA/BCRA. Verificar antes de uso fiscal.",
+        ];
+
   const resumen = [
     ["Análisis de Cuenta Comitente"],
     ["Moneda del informe", etiquetaMonedaInforme(ultimoMonedaInforme)],
-    [
-      "Nota cotizaciones",
-      "BNA y AL30C/MEP proxy vía Bluelytics (evolution.json); no es cotización oficial BYMA/BCRA. Verificar antes de uso fiscal.",
-    ],
+    notaCotizacion,
     [],
     ["Ingresos de Dinero en la Cuenta", cf.ingresos_cuenta],
     ["Salidas de Dinero en la Cuenta", cf.salidas_cuenta],
@@ -254,6 +328,18 @@ function exportarExcelCC(resultado) {
     [
       "Gastos de operación (mismo código, fila secundaria)",
       cf.gastos_operacion_broker ?? 0,
+    ],
+    [
+      "Corrección IVA y cargo por descubierto (gasto, sin PEPS)",
+      cf.gastos_iva_correccion_descubierto ?? 0,
+    ],
+    [
+      "Impuestos y Retenciones (retención, percepción, IIGG/ganancias, BBPP/bienes personales)",
+      cf.impuestos_y_retenciones ?? 0,
+    ],
+    [
+      "Concepto a definir (sin ticker: descripción no reconocida aún)",
+      cf.concepto_a_definir ?? 0,
     ],
     [],
     ["Resultado ejercicio (realizado ventas vs costo PEPS)", resultado.resultadoEjercicio],
@@ -271,19 +357,7 @@ function exportarExcelCC(resultado) {
     "Resultado PEPS (ventas)",
     "Gasto op. consolidado",
   ];
-  const filasDet = resultado.detalleMovs.map((d) => [
-    fmtFecha(d.fechaConc),
-    d.ticker || "—",
-    d.descripcion,
-    d.tipoLinea,
-    d.cantidad ?? "",
-    d.precio ?? "",
-    d.importe ?? "",
-    d.peps?.resultado != null ? d.peps.resultado : "",
-    d.gastoOperacionAsociado != null && Number.isFinite(d.gastoOperacionAsociado)
-      ? d.gastoOperacionAsociado
-      : "",
-  ]);
+  const filasDet = resultado.detalleMovs.map((d) => filaDetalleMovimientoExcel(d));
 
   const cabPend = ["Ticker", "Cantidad restante", "Valor unitario (PEPS)", "Costo remanente"];
   const filasPend = (resultado.lotesPendientes || []).map((p) => [
@@ -307,6 +381,52 @@ function exportarExcelCC(resultado) {
   XLSX.utils.book_append_sheet(wb, wsDet, "Detalle movimientos");
   XLSX.utils.book_append_sheet(wb, wsPend, "Lotes pendientes");
   XLSX.utils.book_append_sheet(wb, wsOrigen, "Origen importado");
+
+  const nombresReservados = new Set([
+    "Resumen",
+    "Detalle movimientos",
+    "Lotes pendientes",
+    "Origen importado",
+  ]);
+  const porTipo = new Map();
+  for (const d of resultado.detalleMovs) {
+    const t = d.tipoLinea || "sin_linea";
+    if (!porTipo.has(t)) porTipo.set(t, []);
+    porTipo.get(t).push(d);
+  }
+  const tiposOrdenados = [...porTipo.keys()].sort((a, b) => a.localeCompare(b));
+  for (const tipo of tiposOrdenados) {
+    const rows = porTipo.get(tipo);
+    const label = etiquetaRubroTipoLinea(tipo);
+    let sumImp = 0;
+    for (const d of rows) {
+      const imp = d.importe;
+      if (imp != null && Number.isFinite(imp)) sumImp += imp;
+    }
+    const aoaRubro = [
+      [label],
+      ["Total importe (suma algebraica)", sumImp],
+      [],
+      cabDet,
+      ...rows.map((d) => filaDetalleMovimientoExcel(d)),
+    ];
+    const nombreHoja = nombreHojaExcelUnico(label, nombresReservados);
+    const wsRubro = XLSX.utils.aoa_to_sheet(aoaRubro);
+    XLSX.utils.book_append_sheet(wb, wsRubro, nombreHoja);
+  }
+
+  if (!porTipo.has("concepto_a_definir")) {
+    const label = etiquetaRubroTipoLinea("concepto_a_definir");
+    const aoaConcepto = [
+      [label],
+      ["Total importe (suma algebraica)", cf.concepto_a_definir ?? 0],
+      [],
+      cabDet,
+    ];
+    const nombreHojaConcepto = nombreHojaExcelUnico(label, nombresReservados);
+    const wsConcepto = XLSX.utils.aoa_to_sheet(aoaConcepto);
+    XLSX.utils.book_append_sheet(wb, wsConcepto, nombreHojaConcepto);
+  }
 
   const base = ultimoNombreMovs.replace(/\.[^.]+$/, "");
   XLSX.writeFile(wb, `${base}_cc_procesado.xlsx`);
@@ -360,7 +480,7 @@ async function ejecutarAnalisisCC() {
   }
 
   const monedaInforme = selMoneda.value;
-  if (monedaInforme !== "ARS" && monedaInforme !== "USD" && monedaInforme !== "CV7000") {
+  if (!["ARS", "USD", "CV7000", "ORIGEN"].includes(monedaInforme)) {
     mostrarErrorCC("Moneda del informe no válida.");
     ccAnalisisEnCurso = false;
     return;
@@ -375,25 +495,27 @@ async function ejecutarAnalisisCC() {
     return;
   }
 
-  let cotMap;
-  try {
-    elCargando.hidden = false;
-    btnImport.disabled = true;
-    selMoneda.disabled = true;
-    cotMap = await obtenerCotizacionesPorFechas(new Set(fechasIso));
-  } catch (e) {
-    mostrarErrorCC(e.message || String(e));
-    $("ccPanelResultados").hidden = true;
-    $("btnExportarCC").disabled = true;
-    elCargando.hidden = true;
-    btnImport.disabled = false;
-    selMoneda.disabled = false;
-    ccAnalisisEnCurso = false;
-    return;
-  } finally {
-    elCargando.hidden = true;
-    btnImport.disabled = false;
-    selMoneda.disabled = false;
+  let cotMap = null;
+  if (monedaInforme !== "ORIGEN") {
+    try {
+      elCargando.hidden = false;
+      btnImport.disabled = true;
+      selMoneda.disabled = true;
+      cotMap = await obtenerCotizacionesPorFechas(new Set(fechasIso));
+    } catch (e) {
+      mostrarErrorCC(e.message || String(e));
+      $("ccPanelResultados").hidden = true;
+      $("btnExportarCC").disabled = true;
+      elCargando.hidden = true;
+      btnImport.disabled = false;
+      selMoneda.disabled = false;
+      ccAnalisisEnCurso = false;
+      return;
+    } finally {
+      elCargando.hidden = true;
+      btnImport.disabled = false;
+      selMoneda.disabled = false;
+    }
   }
 
   let movConv;
@@ -433,13 +555,22 @@ async function ejecutarAnalisisCC() {
   $("ccRenta").textContent = fmtNum(cf.ingresos_renta ?? 0, 2);
   $("ccRentaAmort").textContent = fmtNum(cf.ingresos_renta_y_amortizacion ?? 0, 2);
   $("ccGastosOp").textContent = fmtNum(cf.gastos_operacion_broker ?? 0, 2);
+  $("ccGastosIvaDesc").textContent = fmtNum(cf.gastos_iva_correccion_descubierto ?? 0, 2);
+  $("ccImpuestosRet").textContent = fmtNum(cf.impuestos_y_retenciones ?? 0, 2);
+  $("ccConceptoDefinir").textContent = fmtNum(cf.concepto_a_definir ?? 0, 2);
   $("ccResEjercicio").textContent = fmtNum(resultado.resultadoEjercicio, 2);
 
   const resumenMon = $("ccMonedaInformeResumen");
   if (resumenMon) {
-    resumenMon.textContent =
-      `Importes en ${etiquetaMonedaInforme(monedaInforme)}. ` +
-      "Cotizaciones: dólar oficial (Bluelytics Oficial) y MEP/AL30C proxy (Bluelytics Blue) por fecha de concertación; no equivalen a tablero BYMA/BCRA.";
+    if (monedaInforme === "ORIGEN") {
+      resumenMon.textContent =
+        "Importes por fila tal como en el archivo: sin homogeneizar moneda (pueden mezclarse pesos, dólares y C.V. 7000). " +
+        "Los totales son suma algebraica de esos importes; no se aplicaron cotizaciones.";
+    } else {
+      resumenMon.textContent =
+        `Importes en ${etiquetaMonedaInforme(monedaInforme)}. ` +
+        "Cotizaciones: dólar oficial (Bluelytics Oficial) y MEP/AL30C proxy (Bluelytics Blue) por fecha de concertación; no equivalen a tablero BYMA/BCRA.";
+    }
   }
 
   $("ccPanelResultados").hidden = false;

@@ -134,7 +134,8 @@
             renta o amortización, va al resumen de ingresos por título.
             Las filas en distintas monedas (pesos, dólares, dólares C.V. 7000) se
             homogeneizan al importar según la moneda del informe y cotizaciones del día
-            de concertación (ver nota en resultados).
+            de concertación, salvo que elijas «Origen del archivo»: en ese caso no se
+            aplica tipo de cambio y los totales pueden mezclar monedas (ver nota en resultados).
           </p>
           <div class="actions cc-movs-actions">
             <div class="field cc-moneda-informe-field">
@@ -143,6 +144,7 @@
                 <option value="ARS">Pesos (ARS)</option>
                 <option value="USD">Dólares (USD)</option>
                 <option value="CV7000">Dólares C.V. 7000</option>
+                <option value="ORIGEN">Origen del archivo (sin conversión)</option>
               </select>
             </div>
             <button type="button" class="btn-primary" id="btnImportarMovsCC">
@@ -209,6 +211,24 @@
                 Gastos de operación (mismo código de operación, fila secundaria)
               </div>
               <div class="valor" id="ccGastosOp">—</div>
+            </div>
+            <div class="result-item wide">
+              <div class="label">
+                Corrección IVA y cargo por descubierto (gasto, sin PEPS)
+              </div>
+              <div class="valor" id="ccGastosIvaDesc">—</div>
+            </div>
+            <div class="result-item wide">
+              <div class="label">
+                Impuestos y Retenciones (retención, percepción, IIGG/ganancias, BBPP/bienes personales)
+              </div>
+              <div class="valor" id="ccImpuestosRet">—</div>
+            </div>
+            <div class="result-item wide">
+              <div class="label">
+                Concepto a definir (sin ticker: descripción aún no clasificada)
+              </div>
+              <div class="valor" id="ccConceptoDefinir">—</div>
             </div>
             <div class="result-item wide">
               <div class="label">Resultado ejercicio (ventas vs costo PEPS)</div>
