@@ -6,6 +6,8 @@ import {
   tipoCambioLado,
   normalizarTextoComparacion,
   esTipoCorporativos,
+  detectarMapaColumnasMovimientos,
+  MAPA_LEGACY_MOVIMIENTOS,
 } from "./cc-engine.js";
 import {
   fechaIsoLocal,
@@ -64,14 +66,19 @@ function fmtFecha(d) {
   return d.toLocaleDateString("es-AR");
 }
 
-function leerExcelHoja(data) {
+function leerPrimeraHojaFilas2D(data) {
   const XLSX = window.XLSX;
   if (!XLSX) throw new Error("No se cargó la librería XLSX.");
   const wb = XLSX.read(data, { type: "array", cellDates: true });
   const name = wb.SheetNames[0];
   if (!name) throw new Error("El archivo no tiene hojas.");
   const ws = wb.Sheets[name];
-  const all = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "", raw: false });
+  return XLSX.utils.sheet_to_json(ws, { header: 1, defval: "", raw: false });
+}
+
+/** Tenencias: fila 1 títulos, columnas A–C usadas (orden fijo). */
+function leerExcelHojaTenencias(data) {
+  const all = leerPrimeraHojaFilas2D(data);
   if (!all.length) return [];
   return all.slice(1).map((row) => ({
     A: row[0],
@@ -84,6 +91,35 @@ function leerExcelHoja(data) {
     H: row[7],
     I: row[8],
   }));
+}
+
+/**
+ * Movimientos CC: fila 1 = encabezados reconocidos o, si falla la detección, orden A–I legacy.
+ */
+function leerExcelMovimientosCC(data) {
+  const all = leerPrimeraHojaFilas2D(data);
+  if (!all.length) {
+    return {
+      filasDatos: [],
+      mapa: MAPA_LEGACY_MOVIMIENTOS,
+      cabeceras: [],
+    };
+  }
+  const cabeceras = all[0].map((c) => String(c ?? ""));
+  try {
+    const mapa = detectarMapaColumnasMovimientos(all[0]);
+    return {
+      filasDatos: all.slice(1).map((row) => [...row]),
+      mapa,
+      cabeceras,
+    };
+  } catch {
+    return {
+      filasDatos: all.slice(1).map((row) => [...row]),
+      mapa: MAPA_LEGACY_MOVIMIENTOS,
+      cabeceras,
+    };
+  }
 }
 
 function crearFilaTenencia() {
@@ -163,6 +199,7 @@ function mostrarErrorCC(msg) {
 }
 
 function filaOrigenExcelAI(row) {
+  if (Array.isArray(row)) return [...row];
   return [
     row.A ?? row[0] ?? "",
     row.B ?? row[1] ?? "",
@@ -184,21 +221,26 @@ function monedaOriginalCelda(d) {
 }
 
 /**
- * Hoja con las mismas filas que el Excel importado (A–I sin modificar), moneda original explícita, importe en moneda del informe y tipo de cambio.
+ * Hoja con las mismas columnas que el Excel importado, más moneda original explícita, importe en moneda del informe y tipo de cambio.
  */
 function construirHojaOrigenConImporteConvertido(cotMap, monedaInforme) {
-  const filasRaw = window.__ccUltimasFilasMovs || [];
+  const meta = window.__ccUltimasFilasMovs;
+  const filasRaw = meta?.filasDatos ?? [];
+  const mapa = meta?.mapa ?? MAPA_LEGACY_MOVIMIENTOS;
+  const cabUser = (meta?.cabeceras ?? []).map((c) => String(c ?? ""));
+  const ancho = Math.max(
+    cabUser.length,
+    filasRaw.reduce(
+      (m, r) => Math.max(m, Array.isArray(r) ? r.length : 0),
+      0
+    )
+  );
+  const cabBase = [...cabUser];
+  while (cabBase.length < ancho) cabBase.push("");
+
   const labelInf = etiquetaMonedaInforme(monedaInforme);
   const cab = [
-    "Fecha concertación",
-    "Descripción",
-    "Ticker",
-    "Tipo instrumento",
-    "Cantidad",
-    "Precio",
-    "Fecha liquidación",
-    "Moneda",
-    "Importe (archivo original)",
+    ...cabBase,
     "Moneda original de la op.",
     `Importe (${labelInf})`,
     "Tipo de cambio aplicado (referencia)",
@@ -206,17 +248,23 @@ function construirHojaOrigenConImporteConvertido(cotMap, monedaInforme) {
   const out = [cab];
   for (let r = 0; r < filasRaw.length; r++) {
     const row = filasRaw[r];
-    const base = filaOrigenExcelAI(row);
-    const mov = interpretarFilaMovimientoExcel(row, r + 2);
+    const wide = filaOrigenExcelAI(row);
+    while (wide.length < ancho) wide.push("");
+    const mov = interpretarFilaMovimientoExcel(row, r + 2, mapa);
     let importeConv = "";
     let tcRef = "";
+    let monedaOrig = "—";
+    if (mov) {
+      monedaOrig = monedaOriginalCelda(mov);
+    } else if (mapa.moneda >= 0 && Array.isArray(row) && row[mapa.moneda] !== undefined) {
+      monedaOrig = monedaOriginalCelda({ moneda: row[mapa.moneda] });
+    }
     if (monedaInforme === "ORIGEN" && mov) {
       if (mov.importe != null && Number.isFinite(mov.importe)) {
         importeConv = mov.importe;
       }
       tcRef = "(sin conversión)";
-      const monedaOrig = monedaOriginalCelda({ moneda: base[7] });
-      out.push([...base.slice(0, 9), monedaOrig, importeConv, tcRef]);
+      out.push([...wide.slice(0, ancho), monedaOrig, importeConv, tcRef]);
       continue;
     }
     if (mov && cotMap) {
@@ -245,16 +293,25 @@ function construirHojaOrigenConImporteConvertido(cotMap, monedaInforme) {
         }
       }
     }
-    const monedaOrig = monedaOriginalCelda({ moneda: base[7] });
-    out.push([...base.slice(0, 9), monedaOrig, importeConv, tcRef]);
+    out.push([...wide.slice(0, ancho), monedaOrig, importeConv, tcRef]);
   }
   return out;
+}
+
+function etiquetaTipoActivoInferido(d) {
+  const t = d.tipoActivoInferido;
+  const f = d.tipoActivoFuente;
+  if (t == null || t === "" || t === "sin_ticker") return "—";
+  if (f && f !== "—") return `${t} (${f})`;
+  return String(t);
 }
 
 function filaDetalleMovimientoExcel(d) {
   return [
     fmtFecha(d.fechaConc),
     d.ticker || "—",
+    d.operacionBroker || "—",
+    etiquetaTipoActivoInferido(d),
     d.descripcion,
     d.tipoLinea,
     d.cantidad ?? "",
@@ -295,7 +352,7 @@ function importeOrigenPepsParaExcel(d) {
 
 function filaDetalleMovimientoExcelHojaPeps(d) {
   const row = filaDetalleMovimientoExcel(d);
-  row[6] = importeOrigenPepsParaExcel(d);
+  row[8] = importeOrigenPepsParaExcel(d);
   return row;
 }
 
@@ -578,6 +635,8 @@ function exportarExcelCC(resultado) {
   const cabDet = [
     "Fecha concertación",
     "Ticker",
+    "Operación (archivo)",
+    "Tipo de activo (inferido)",
     "Descripción",
     "Tipo línea",
     "Cantidad",
@@ -590,6 +649,8 @@ function exportarExcelCC(resultado) {
   const cabDetPeps = [
     "Fecha concertación",
     "Ticker",
+    "Operación (archivo)",
+    "Tipo de activo (inferido)",
     "Descripción",
     "Tipo línea",
     "Cantidad",
@@ -734,8 +795,10 @@ async function ejecutarAnalisisCC() {
   }
 
   const filasMovs = window.__ccUltimasFilasMovs;
-  if (!filasMovs || !filasMovs.length) {
-    mostrarErrorCC("Importá primero el Excel de movimientos del período (columnas A–I, fila 1 títulos).");
+  if (!filasMovs?.filasDatos?.length) {
+    mostrarErrorCC(
+      "Importá primero el Excel de movimientos del período (fila 1 con títulos: fecha de concertación, descripción, cantidad, precio, importe o total; el orden de las columnas puede variar y las tildes en los títulos son opcionales)."
+    );
     $("ccPanelResultados").hidden = true;
     $("btnExportarCC").disabled = true;
     ccAnalisisEnCurso = false;
@@ -744,7 +807,7 @@ async function ejecutarAnalisisCC() {
 
   let movimientos;
   try {
-    movimientos = parsearMovimientosExcel(filasMovs).map((m) => ({
+    movimientos = parsearMovimientosExcel(filasMovs.filasDatos, filasMovs.mapa).map((m) => ({
       ...m,
       monedaNorm: normalizarMonedaColumna(m.moneda),
     }));
@@ -911,7 +974,7 @@ $("fileTenenciasCC").addEventListener("change", async (ev) => {
   mostrarErrorCC("");
   try {
     const buf = await file.arrayBuffer();
-    const filas = leerExcelHoja(buf);
+    const filas = leerExcelHojaTenencias(buf);
     const lotes = parsearTenenciasInicialesExcel(
       filas.map((r) => ({ A: r.A, B: r.B, C: r.C }))
     );
@@ -943,7 +1006,7 @@ $("fileMovsCC").addEventListener("change", async (ev) => {
   mostrarErrorCC("");
   try {
     const buf = await file.arrayBuffer();
-    window.__ccUltimasFilasMovs = leerExcelHoja(buf);
+    window.__ccUltimasFilasMovs = leerExcelMovimientosCC(buf);
     await ejecutarAnalisisCC();
   } catch (e) {
     mostrarErrorCC(e.message || String(e));

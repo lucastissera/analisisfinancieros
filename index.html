@@ -118,9 +118,18 @@
         <section class="card">
           <h2>Movimientos del período</h2>
           <p class="hint">
-            Fila 1: A Fecha concertación, B Descripción, C Ticker, D Tipo instrumento,
-            E Cantidad, F Precio, G Fecha liquidación (opcional), H Moneda,
-            I Importe.             Los CEDEARs y demás tickers pueden venir intercalados: se agrupa por
+            Fila 1: títulos reconocibles (el orden de las columnas puede ser cualquiera; con o sin tildes
+            en las palabras, da igual). Incluí: fecha de concertación (o «fecha» + concertación),
+            descripción, cantidad, precio, importe o monto o total; opcionales: ticker, tipo de instrumento,
+            fecha de liquidación, moneda.             Si la primera fila no se reconoce, se asume el formato fijo A–I como antes.
+            Algunos brokers (p. ej. Inviu) no traen columna Ticker: el código se toma del inicio de la
+            descripción con el patrón «TICKER | …» y la columna «Operación» define compra/venta, caja,
+            caución, dividendos, etc.             El tipo de activo (CEDEAR, bono, acción local, etc.) se infiere por
+            heurística y listas BYMA/CNV de uso común (sin API obligatoria); las listas se pueden
+            ampliar con símbolos tomados de Comafi, TradingView u otros listados públicos.
+            En Inviu, «CC» y «CT» en descripción u operación indican caución colocadora o tomadora;
+            no se interpretan como ticker de activo.
+            Los CEDEARs y demás tickers pueden venir intercalados: se agrupa por
             ticker, se ordena por fecha (las filas con fechas anteriores van
             primero aunque estén más abajo en el archivo) y el mismo día las
             compras se procesan antes que las ventas aunque la venta esté en una
@@ -242,6 +251,19 @@
         </section>
       </div>
     </main>
+    <footer class="app-footer">
+      <p class="app-footer__copyright">
+        <small>© 2026 Lucas Tissera Laplagne · Todos los derechos reservados.</small>
+      </p>
+      <p class="app-footer__legal">
+        <small>
+          Herramienta de carácter informativo; no reemplaza asesoramiento
+          financiero, contable, impositivo ni legal. La interpretación y el uso
+          de los datos y resultados son responsabilidad de quien utiliza la
+          aplicación, en ámbito personal o profesional, según corresponda.
+        </small>
+      </p>
+    </footer>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <script type="module" src="./app.js"></script>
     <script type="module" src="./cc-app.js"></script>

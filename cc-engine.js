@@ -3,6 +3,8 @@
  * más agregados de caja por descripción (sin ticker).
  */
 
+import { inferirTipoActivoArgentinorSync } from "./cc-instrumentos-arg.js";
+
 function parseNumAR(v) {
   if (v === null || v === undefined) return null;
   if (typeof v === "number" && Number.isFinite(v)) return v;
@@ -42,7 +44,8 @@ function excelDateToDate(v) {
 
 /**
  * Normaliza texto para comparar: sin distinguir mayúsculas/minúsculas ni tildes (Unicode NFD).
- * Equivalente a comparar "RÉNTA", "renta", "ReNtA", etc.
+ * Equivalente a comparar "RÉNTA", "renta", "ReNtA", "DESCRIPCIÓN" y "descripcion", etc.
+ * Usar siempre para encabezados de Excel y criterios por texto; las palabras pueden ir con o sin tilde.
  */
 export function normalizarTextoComparacion(s) {
   return String(s ?? "")
@@ -50,6 +53,33 @@ export function normalizarTextoComparacion(s) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toUpperCase();
+}
+
+/** Siglas Inviu en descripción: caución colocadora / tomadora; no son códigos de activo. */
+const INVUI_PREFIJOS_CAUCION_NO_TICKER = new Set(["CC", "CT"]);
+
+/**
+ * Brokers tipo Inviu: ticker al inicio de la descripción antes de " | " (espacio-pipe-espacio).
+ * Ej.: "AAPL | Apple Inc — …"
+ * No interpreta como ticker los prefijos reservados CC/CT (caución colocadora / tomadora en Inviu).
+ */
+export function extraerTickerPrefijoDescripcionInviu(descripcion) {
+  const raw = String(descripcion ?? "").trim();
+  const m = raw.match(/^([A-Za-z][A-Za-z0-9.]{0,15})\s+\|\s+/);
+  if (!m) return null;
+  const candidato = normalizarTextoComparacion(m[1]);
+  if (INVUI_PREFIJOS_CAUCION_NO_TICKER.has(candidato)) return null;
+  return candidato;
+}
+
+function clasificarIngresoDesdeOperacionBroker(operacionBroker) {
+  const o = normalizarTextoComparacion(operacionBroker || "");
+  if (!o) return null;
+  if (o.includes("DIVIDENDO")) return "dividendo";
+  if (o.includes("RENTA") && o.includes("AMORT")) return "renta_y_amortizacion";
+  if (o.includes("AMORT")) return "amortizacion";
+  if (o.includes("RENTA")) return "renta";
+  return null;
 }
 
 /**
@@ -68,10 +98,12 @@ function tienePalabraAmortizacion(dNormalizado) {
 
 /**
  * Ingresos sobre el título sin PEPS (cantidad 0).
- * Criterio: presencia de palabras renta y/o amortización en la descripción.
+ * Criterio: columna «Operación» (brokers tipo Inviu) y/o palabras en la descripción.
  * @returns {'dividendo'|'renta'|'renta_y_amortizacion'|'amortizacion'|null}
  */
-export function clasificarIngresoTituloSinPeps(descripcion) {
+export function clasificarIngresoTituloSinPeps(descripcion, operacionBroker = "") {
+  const desdeOp = clasificarIngresoDesdeOperacionBroker(operacionBroker);
+  if (desdeOp) return desdeOp;
   const d = normalizarTextoComparacion(descripcion);
   if (d.includes("DIVIDENDO EN EFECTIVO")) return "dividendo";
   const tr = tienePalabraRenta(d);
@@ -82,8 +114,8 @@ export function clasificarIngresoTituloSinPeps(descripcion) {
   return null;
 }
 
-export function esIngresoTituloSinPeps(descripcion) {
-  return clasificarIngresoTituloSinPeps(descripcion) != null;
+export function esIngresoTituloSinPeps(descripcion, operacionBroker = "") {
+  return clasificarIngresoTituloSinPeps(descripcion, operacionBroker) != null;
 }
 
 /** Oferta de canje / oferta temprana de canje (instrumentos corporativos). */
@@ -167,14 +199,171 @@ export function parsearTenenciasInicialesExcel(filas) {
   return lotes;
 }
 
+/** Orden fijo A–I (compatibilidad con archivos sin fila de títulos reconocible). -1 = sin columna. */
+export const MAPA_LEGACY_MOVIMIENTOS = Object.freeze({
+  fechaConc: 0,
+  descripcion: 1,
+  ticker: 2,
+  tipoInstrumento: 3,
+  cantidad: 4,
+  precio: 5,
+  fechaLiq: 6,
+  moneda: 7,
+  importe: 8,
+  operacion: -1,
+});
+
+function leerCeldaMovimiento(row, idx) {
+  if (idx == null || idx < 0) return undefined;
+  if (Array.isArray(row)) {
+    return idx < row.length ? row[idx] : "";
+  }
+  const letters = ["A", "B", "C", "D", "E", "F", "G", "H", "I"];
+  if (idx < 9 && row[letters[idx]] !== undefined) return row[letters[idx]];
+  return row[idx];
+}
+
 /**
- * Movimientos: A-I según especificación. filas sin fila de título (solo datos).
+ * A partir de la fila 1 del Excel (títulos), asigna índices de columnas por nombre.
+ * Obligatorias: fecha de concertación (o columna «fecha» + concertación), descripción,
+ * cantidad, precio, importe / monto / total.
+ * Cada título se compara ya normalizado (sin tildes ni mayúsculas): «Descripción» y «descripcion» equivalen.
  */
-export function parsearMovimientosExcel(filas) {
+export function detectarMapaColumnasMovimientos(cabecerasRaw) {
+  const cabeceras = cabecerasRaw.map((c) => String(c ?? ""));
+  /** Encabezados sin tildes ni variación de mayúsculas (ver normalizarTextoComparacion). */
+  const norm = cabeceras.map((c) => normalizarTextoComparacion(c));
+  const n = norm.length;
+
+  function firstMatch(pred) {
+    for (let i = 0; i < n; i++) if (pred(norm[i], i)) return i;
+    return -1;
+  }
+
+  let idxLiq = -1;
+  for (let i = 0; i < n; i++) {
+    const h = norm[i];
+    if (h.includes("LIQUIDACION") || (h.includes("LIQUID") && !h.includes("CONCERT"))) {
+      idxLiq = i;
+      break;
+    }
+    if (h.includes("FECHA") && (h.includes("LIQUID") || /\bLIQ\b/.test(h))) {
+      idxLiq = i;
+      break;
+    }
+  }
+
+  let idxFecha = -1;
+  for (let i = 0; i < n; i++) {
+    const h = norm[i];
+    if (i === idxLiq) continue;
+    if (
+      h.includes("CONCERT") ||
+      h.includes("CONCERTACION") ||
+      (h.includes("FECHA") && (h.includes("CONCERT") || h.includes("CONCERTACION")))
+    ) {
+      idxFecha = i;
+      break;
+    }
+  }
+  if (idxFecha < 0) {
+    idxFecha = firstMatch((h, i) => {
+      if (i === idxLiq) return false;
+      return h === "FECHA" || (h.startsWith("FECHA") && !h.includes("LIQUID"));
+    });
+  }
+
+  const idxDesc = firstMatch(
+    (h) =>
+      h.includes("DESCRIPCION") ||
+      h.includes("DESCRIP") ||
+      (h.includes("CONCEPTO") && !h.includes("MONEDA"))
+  );
+
+  const idxCant = firstMatch(
+    (h) => h.includes("CANTIDAD") || /^CANT[.\s]/.test(h) || h === "CANT"
+  );
+
+  const idxPrecio = firstMatch((h) => {
+    if (h === "TOTAL" || h === "MONTO" || h.includes("IMPORTE") || h.includes("SUBTOTAL"))
+      return false;
+    if (h.includes("PRECIO")) return true;
+    return h === "PU" || h.includes("PRECIO UNIT") || h.includes("P. UNIT") || h === "P UNIT";
+  });
+
+  let idxImp = firstMatch((h) => {
+    if (h.includes("IMPORTE") && !h.includes("CONVERT")) return true;
+    if (h === "MONTO" || h.startsWith("MONTO ")) return true;
+    if (h.includes("SUBTOTAL")) return false;
+    if (h === "TOTAL" || (h.includes("TOTAL") && !h.includes("PRECIO"))) return true;
+    return false;
+  });
+  if (idxImp === idxPrecio && idxImp >= 0) idxImp = -1;
+
+  const idxTicker = firstMatch(
+    (h) =>
+      h.includes("TICKER") ||
+      h.includes("ESPECIE") ||
+      h.includes("SIMBOLO") ||
+      h.includes("SIMBOL")
+  );
+
+  const idxTipo = firstMatch(
+    (h) =>
+      (h.includes("TIPO") && h.includes("INSTRUMENT")) ||
+      h.includes("TIPO INSTRUMENTO") ||
+      (h.includes("CLASE") && h.includes("INSTRUMENT"))
+  );
+
+  const idxMoneda = firstMatch(
+    (h) => h.includes("MONEDA") && !h.includes("INFORME") && !h.includes("CONVERT")
+  );
+
+  const idxOperacion = firstMatch(
+    (h) =>
+      h === "OPERACION" ||
+      h.startsWith("OPERACION ") ||
+      (h.includes("OPERACION") && !h.includes("CODIGO")) ||
+      h.includes("TIPO DE OPERACION") ||
+      h.includes("TIPO OPERACION")
+  );
+
+  const faltan = [];
+  if (idxFecha < 0) faltan.push("fecha de concertación (o fecha + concertación)");
+  if (idxDesc < 0) faltan.push("descripción");
+  if (idxCant < 0) faltan.push("cantidad");
+  if (idxPrecio < 0) faltan.push("precio");
+  if (idxImp < 0) faltan.push("importe, monto o total");
+  if (faltan.length) {
+    throw new Error(
+      `En la primera fila no se encontraron columnas obligatorias: ${faltan.join(
+        ", "
+      )}. Usá encabezados claros (p. ej. Fecha concertación, Descripción, Cantidad, Precio, Importe o Total; con o sin tildes).`
+    );
+  }
+
+  return {
+    fechaConc: idxFecha,
+    descripcion: idxDesc,
+    ticker: idxTicker,
+    tipoInstrumento: idxTipo,
+    cantidad: idxCant,
+    precio: idxPrecio,
+    fechaLiq: idxLiq,
+    moneda: idxMoneda,
+    importe: idxImp,
+    operacion: idxOperacion,
+  };
+}
+
+/**
+ * Movimientos: filas de datos + mapa de columnas (MAPA_LEGACY_MOVIMIENTOS = orden A–I antiguo).
+ */
+export function parsearMovimientosExcel(filas, mapa = MAPA_LEGACY_MOVIMIENTOS) {
   const ops = [];
   for (let r = 0; r < filas.length; r++) {
     const row = filas[r];
-    const fechaRaw = row.A ?? row[0];
+    const fechaRaw = leerCeldaMovimiento(row, mapa.fechaConc);
     if (
       fechaRaw === undefined ||
       fechaRaw === null ||
@@ -184,23 +373,39 @@ export function parsearMovimientosExcel(filas) {
     }
     const fechaConc = excelDateToDate(fechaRaw);
     if (!fechaConc || Number.isNaN(fechaConc.getTime())) {
-      throw new Error(`Movimientos fila ${r + 2}: fecha concertación inválida (A).`);
+      throw new Error(`Movimientos fila ${r + 2}: fecha de concertación inválida.`);
     }
-    const descripcion = String(row.B ?? row[1] ?? "");
-    const ticker = String(row.C ?? row[2] ?? "").trim();
-    const tipoInstrumento = String(row.D ?? row[3] ?? "").trim();
-    const cantidad = parseNumAR(row.E ?? row[4]);
-    const precio = parseNumAR(row.F ?? row[5]);
-    const fechaLiqRaw = row.G ?? row[6];
+    const descripcion = String(leerCeldaMovimiento(row, mapa.descripcion) ?? "");
+    const operacionBroker = String(
+      leerCeldaMovimiento(row, mapa.operacion ?? -1) ?? ""
+    ).trim();
+    let tickerCol = String(leerCeldaMovimiento(row, mapa.ticker) ?? "").trim();
+    let tickerExtraidoDesdeDesc = false;
+    if (!tickerCol) {
+      const ext = extraerTickerPrefijoDescripcionInviu(descripcion);
+      if (ext) {
+        tickerCol = ext;
+        tickerExtraidoDesdeDesc = true;
+      }
+    }
+    const ticker = tickerCol ? normalizarTextoComparacion(tickerCol) : "";
+    const tipoInstrumento = String(leerCeldaMovimiento(row, mapa.tipoInstrumento) ?? "").trim();
+    const cantidad = parseNumAR(leerCeldaMovimiento(row, mapa.cantidad));
+    const precio = parseNumAR(leerCeldaMovimiento(row, mapa.precio));
+    const fechaLiqRaw = leerCeldaMovimiento(row, mapa.fechaLiq);
     const fechaLiq =
       fechaLiqRaw === undefined || fechaLiqRaw === null || String(fechaLiqRaw).trim() === ""
         ? null
         : excelDateToDate(fechaLiqRaw);
     if (fechaLiq && Number.isNaN(fechaLiq.getTime())) {
-      throw new Error(`Movimientos fila ${r + 2}: fecha liquidación inválida (G).`);
+      throw new Error(`Movimientos fila ${r + 2}: fecha de liquidación inválida.`);
     }
-    const moneda = row.H ?? row[7];
-    const importe = parseNumAR(row.I ?? row[8]);
+    const moneda = leerCeldaMovimiento(row, mapa.moneda);
+    const importe = parseNumAR(leerCeldaMovimiento(row, mapa.importe));
+
+    const tipoAct = ticker
+      ? inferirTipoActivoArgentinorSync(ticker)
+      : { tipo: null, fuente: "—" };
 
     const cantidadCero =
       cantidad == null || Math.abs(Number(cantidad) || 0) < 1e-9;
@@ -208,19 +413,19 @@ export function parsearMovimientosExcel(filas) {
     if (
       ticker &&
       cantidadCero &&
-      !esIngresoTituloSinPeps(descripcion) &&
+      !esIngresoTituloSinPeps(descripcion, operacionBroker) &&
       !esGastoCorreccionIvaODescubierto(descripcion) &&
       !esImpuestoRetencion(descripcion)
     ) {
       throw new Error(
-        `Movimientos fila ${r + 2}: con Ticker (C) y cantidad 0 (E), la descripción debe indicar Dividendo en efectivo, Renta, Renta y Amortización, Amortización, Corrección IVA, Cargo por Descubierto, Impuestos/retenciones (retención, percepción, IIGG/ganancias, BBPP/bienes personales) u otro ingreso/gasto sin PEPS reconocido.`
+        `Movimientos fila ${r + 2}: con ticker y cantidad 0, la descripción debe indicar Dividendo en efectivo, Renta, Renta y Amortización, Amortización, Corrección IVA, Cargo por Descubierto, Impuestos/retenciones (retención, percepción, IIGG/ganancias, BBPP/bienes personales) u otro ingreso/gasto sin PEPS reconocido.`
       );
     }
 
     ops.push({
       fechaConc,
       descripcion,
-      ticker: ticker ? normalizarTextoComparacion(ticker) : "",
+      ticker,
       tipoInstrumento,
       cantidad,
       precio,
@@ -228,6 +433,10 @@ export function parsearMovimientosExcel(filas) {
       moneda,
       importe,
       filaExcel: r + 2,
+      operacionBroker,
+      tickerExtraidoDesdeDescripcion: tickerExtraidoDesdeDesc,
+      tipoActivoInferido: tipoAct.tipo,
+      tipoActivoFuente: tipoAct.fuente,
     });
   }
 
@@ -243,8 +452,12 @@ export function parsearMovimientosExcel(filas) {
  * Misma lógica que una fila de parsearMovimientosExcel, pero sin ordenar ni lanzar errores:
  * devuelve null si la fila se omite (sin fecha), no es convertible o sería inválida para el análisis.
  */
-export function interpretarFilaMovimientoExcel(row, filaExcel) {
-  const fechaRaw = row.A ?? row[0];
+export function interpretarFilaMovimientoExcel(
+  row,
+  filaExcel,
+  mapa = MAPA_LEGACY_MOVIMIENTOS
+) {
+  const fechaRaw = leerCeldaMovimiento(row, mapa.fechaConc);
   if (
     fechaRaw === undefined ||
     fechaRaw === null ||
@@ -256,12 +469,24 @@ export function interpretarFilaMovimientoExcel(row, filaExcel) {
   if (!fechaConc || Number.isNaN(fechaConc.getTime())) {
     return null;
   }
-  const descripcion = String(row.B ?? row[1] ?? "");
-  const ticker = String(row.C ?? row[2] ?? "").trim();
-  const tipoInstrumento = String(row.D ?? row[3] ?? "").trim();
-  const cantidad = parseNumAR(row.E ?? row[4]);
-  const precio = parseNumAR(row.F ?? row[5]);
-  const fechaLiqRaw = row.G ?? row[6];
+  const descripcion = String(leerCeldaMovimiento(row, mapa.descripcion) ?? "");
+  const operacionBroker = String(
+    leerCeldaMovimiento(row, mapa.operacion ?? -1) ?? ""
+  ).trim();
+  let tickerCol = String(leerCeldaMovimiento(row, mapa.ticker) ?? "").trim();
+  let tickerExtraidoDesdeDesc = false;
+  if (!tickerCol) {
+    const ext = extraerTickerPrefijoDescripcionInviu(descripcion);
+    if (ext) {
+      tickerCol = ext;
+      tickerExtraidoDesdeDesc = true;
+    }
+  }
+  const ticker = tickerCol ? normalizarTextoComparacion(tickerCol) : "";
+  const tipoInstrumento = String(leerCeldaMovimiento(row, mapa.tipoInstrumento) ?? "").trim();
+  const cantidad = parseNumAR(leerCeldaMovimiento(row, mapa.cantidad));
+  const precio = parseNumAR(leerCeldaMovimiento(row, mapa.precio));
+  const fechaLiqRaw = leerCeldaMovimiento(row, mapa.fechaLiq);
   const fechaLiq =
     fechaLiqRaw === undefined || fechaLiqRaw === null || String(fechaLiqRaw).trim() === ""
       ? null
@@ -269,8 +494,12 @@ export function interpretarFilaMovimientoExcel(row, filaExcel) {
   if (fechaLiq && Number.isNaN(fechaLiq.getTime())) {
     return null;
   }
-  const moneda = row.H ?? row[7];
-  const importe = parseNumAR(row.I ?? row[8]);
+  const moneda = leerCeldaMovimiento(row, mapa.moneda);
+  const importe = parseNumAR(leerCeldaMovimiento(row, mapa.importe));
+
+  const tipoAct = ticker
+    ? inferirTipoActivoArgentinorSync(ticker)
+    : { tipo: null, fuente: "—" };
 
   const cantidadCero =
     cantidad == null || Math.abs(Number(cantidad) || 0) < 1e-9;
@@ -278,7 +507,7 @@ export function interpretarFilaMovimientoExcel(row, filaExcel) {
   if (
     ticker &&
     cantidadCero &&
-    !esIngresoTituloSinPeps(descripcion) &&
+    !esIngresoTituloSinPeps(descripcion, operacionBroker) &&
     !esGastoCorreccionIvaODescubierto(descripcion) &&
     !esImpuestoRetencion(descripcion)
   ) {
@@ -288,7 +517,7 @@ export function interpretarFilaMovimientoExcel(row, filaExcel) {
   return {
     fechaConc,
     descripcion,
-    ticker: ticker ? normalizarTextoComparacion(ticker) : "",
+    ticker,
     tipoInstrumento,
     cantidad,
     precio,
@@ -296,6 +525,10 @@ export function interpretarFilaMovimientoExcel(row, filaExcel) {
     moneda,
     importe,
     filaExcel,
+    operacionBroker,
+    tickerExtraidoDesdeDescripcion: tickerExtraidoDesdeDesc,
+    tipoActivoInferido: tipoAct.tipo,
+    tipoActivoFuente: tipoAct.fuente,
   };
 }
 
@@ -322,14 +555,45 @@ export function extraerCodigoOperacionDescripcion(descripcion) {
 }
 
 /** Acciones, CEDEAR o Corporativos con cantidad ≠ 0: aplica regla costo vs gastos por mismo código de operación. */
-export function aplicaConsolidacionCodigoOperacion(tipoInstrumento, cantidad) {
+export function aplicaConsolidacionCodigoOperacion(
+  tipoInstrumento,
+  cantidad,
+  tipoActivoInferido
+) {
   const c0 = cantidad == null || Math.abs(cantidad) < 1e-9;
   if (c0) return false;
   const t = normalizarTextoComparacion(String(tipoInstrumento ?? "").trim());
   if (t.includes("ACCION")) return true;
   if (t.includes("CEDEAR")) return true;
   if (t === "CORPORATIVOS") return true;
+  const inf = normalizarTextoComparacion(String(tipoActivoInferido ?? ""));
+  if (
+    inf.includes("CEDEAR") ||
+    inf.includes("ACCION") ||
+    inf === "ACCION_CEDEAR_U_OTRO" ||
+    inf.includes("BONO") ||
+    inf.includes("LETRA")
+  ) {
+    return true;
+  }
   return false;
+}
+
+/**
+ * Depósito/retiro explícito en «Operación»: no usar ticker inferido de la descripción (Inviu).
+ */
+function priorizarOperacionCajaSobreTicker(m) {
+  const o = normalizarTextoComparacion(String(m.operacionBroker || ""));
+  if (!o) return m;
+  const solo = clasificarFlujoCajaSoloOperacion(o);
+  if (solo === "ingresos_cuenta" || solo === "salidas_cuenta") {
+    return {
+      ...m,
+      ticker: "",
+      tickerExtraidoDesdeDescripcion: false,
+    };
+  }
+  return m;
 }
 
 function claveGrupoOperacionCodigo(m, codOp) {
@@ -352,7 +616,14 @@ export function consolidarMovimientosAccionesMismoCodigoOperacion(movimientos) {
   for (let i = 0; i < n; i++) {
     const m = movimientos[i];
     if (!m.ticker) continue;
-    if (!aplicaConsolidacionCodigoOperacion(m.tipoInstrumento, m.cantidad)) continue;
+    if (
+      !aplicaConsolidacionCodigoOperacion(
+        m.tipoInstrumento,
+        m.cantidad,
+        m.tipoActivoInferido
+      )
+    )
+      continue;
     const cod = extraerCodigoOperacionDescripcion(m.descripcion);
     if (cod == null) continue;
     const key = claveGrupoOperacionCodigo(m, cod);
@@ -427,9 +698,108 @@ export function consolidarMovimientosAccionesMismoCodigoOperacion(movimientos) {
 }
 
 /**
- * Sin ticker: clasificar por descripción (orden: caución antes que cobro/pago genéricos).
+ * Solo texto de columna «Operación» (Inviu y similares): flujos de caja sin depender de la descripción.
  */
-export function clasificarFlujoCaja(descripcion) {
+function clasificarFlujoCajaSoloOperacion(oNorm) {
+  if (!oNorm) return null;
+  if (oNorm.includes("APCOLFUT")) return "rescate_caucion_colocadora";
+  if (oNorm.includes("APCOLCON")) return "suscripcion_caucion_colocadora";
+  if (oNorm.includes("APTOMCON")) return "pedido_caucion_tomadora";
+  if (oNorm.includes("APTOMFUT")) return "pagado_caucion_tomadora";
+
+  if (oNorm.includes("DEPOSITO") && !oNorm.includes("CAUCION")) {
+    return "ingresos_cuenta";
+  }
+  if (
+    (oNorm.includes("INGRESO") &&
+      (oNorm.includes("FONDO") ||
+        oNorm.includes("CUENTA") ||
+        oNorm.includes("DINERO"))) ||
+    oNorm.includes("TRANSFERENCIA ENTRANTE")
+  ) {
+    if (!oNorm.includes("CAUCION")) return "ingresos_cuenta";
+  }
+  if (
+    (oNorm.includes("RETIRO") ||
+      oNorm.includes("EXTRACCION") ||
+      oNorm.includes("EGRESO")) &&
+    !oNorm.includes("CAUCION")
+  ) {
+    return "salidas_cuenta";
+  }
+
+  if (
+    oNorm.includes("CAUCION") ||
+    oNorm.includes("CAUC") ||
+    /\bCC\b/.test(oNorm) ||
+    /\bCT\b/.test(oNorm)
+  ) {
+    /* Inviu: «CC» / «CT» en operación = caución colocadora / tomadora (no son tickers). */
+    const coloc =
+      oNorm.includes("COLOCADORA") ||
+      oNorm.includes("COLOC") ||
+      /\bCC\b/.test(oNorm);
+    const toma =
+      oNorm.includes("TOMADORA") ||
+      oNorm.includes("TOMAD") ||
+      /\bCT\b/.test(oNorm);
+    if (coloc && !toma) {
+      if (
+        oNorm.includes("SUSCRIP") ||
+        oNorm.includes("PRESTAMO") ||
+        oNorm.includes("COLOCACON") ||
+        (oNorm.includes("INICIO") && oNorm.includes("OPERACION"))
+      ) {
+        return "suscripcion_caucion_colocadora";
+      }
+      if (
+        oNorm.includes("RESCATE") ||
+        oNorm.includes("COBRO") ||
+        oNorm.includes("VENCIMIENTO") ||
+        oNorm.includes("LIQUIDACION")
+      ) {
+        return "rescate_caucion_colocadora";
+      }
+    }
+    if (toma && !coloc) {
+      if (
+        oNorm.includes("PEDIDO") ||
+        oNorm.includes("SOLICIT") ||
+        oNorm.includes("TOMADCON")
+      ) {
+        return "pedido_caucion_tomadora";
+      }
+      if (
+        oNorm.includes("PAGO") ||
+        oNorm.includes("DEVOL") ||
+        oNorm.includes("VENCIMIENTO") ||
+        oNorm.includes("LIQUIDACION")
+      ) {
+        return "pagado_caucion_tomadora";
+      }
+    }
+  }
+
+  if (
+    oNorm.includes("REMUNERACION") &&
+    (oNorm.includes("SALDO") || oNorm.includes("CUENTA"))
+  ) {
+    return "ingresos_cuenta";
+  }
+
+  return null;
+}
+
+/**
+ * Sin ticker: clasificar por descripción (orden: caución antes que cobro/pago genéricos).
+ * Si hay columna «Operación», se usa primero para brokers tipo Inviu.
+ */
+export function clasificarFlujoCaja(descripcion, operacionBroker = "") {
+  const o = normalizarTextoComparacion(operacionBroker || "");
+  if (o) {
+    const porOp = clasificarFlujoCajaSoloOperacion(o);
+    if (porOp) return porOp;
+  }
   const d = normalizarTextoComparacion(descripcion);
   /* Colocadora: en broker, APCOLFUT/APCOLCON se cruzan respecto del sentido contable habitual;
      importe positivo = cobro, negativo = préstamo de fondos (ver pantalla). */
@@ -438,12 +808,105 @@ export function clasificarFlujoCaja(descripcion) {
   /* Tomadora: ingreso al pedir prestado (CON), egreso al devolver (FUT). */
   if (d.includes("APTOMCON")) return "pedido_caucion_tomadora";
   if (d.includes("APTOMFUT")) return "pagado_caucion_tomadora";
+
+  const inviuDesc = clasificarCaucionInviuDesdeDescripcionNormalizada(d);
+  if (inviuDesc) return inviuDesc;
+
   if (d.includes("COBRO")) return "ingresos_cuenta";
   if (d.includes("PAGO")) return "salidas_cuenta";
   return null;
 }
 
+/**
+ * Inviu: descripción tipo "CC | …" / "CT | …" (caución; no es ticker).
+ */
+function clasificarCaucionInviuDesdeDescripcionNormalizada(d) {
+  const ccHead = d.startsWith("CC |") || d.startsWith("CC|");
+  const ctHead = d.startsWith("CT |") || d.startsWith("CT|");
+  if (ccHead) {
+    if (
+      d.includes("SUSCRIP") ||
+      d.includes("APCOLCON") ||
+      (d.includes("INICIO") && d.includes("OPERACION"))
+    ) {
+      return "suscripcion_caucion_colocadora";
+    }
+    if (
+      d.includes("RESCATE") ||
+      d.includes("APCOLFUT") ||
+      d.includes("VENCIMIENTO") ||
+      d.includes("VENC ") ||
+      d.includes("LIQUIDACION")
+    ) {
+      return "rescate_caucion_colocadora";
+    }
+    return null;
+  }
+  if (ctHead) {
+    if (d.includes("PEDIDO") || d.includes("APTOMCON") || d.includes("SOLICIT")) {
+      return "pedido_caucion_tomadora";
+    }
+    if (
+      d.includes("PAGO") ||
+      d.includes("APTOMFUT") ||
+      d.includes("DEVOL") ||
+      d.includes("VENCIMIENTO") ||
+      d.includes("VENC ") ||
+      d.includes("LIQUIDACION")
+    ) {
+      return "pagado_caucion_tomadora";
+    }
+    return null;
+  }
+  return null;
+}
+
 function esCompra(m) {
+  const op = normalizarTextoComparacion(String(m.operacionBroker || ""));
+  /* Inviu: operación que empieza con CC/CT = caución, no compra/venta de activo por esta vía. */
+  if (
+    op &&
+    !op.startsWith("CC") &&
+    !op.startsWith("CT") &&
+    !op.includes("CAUCION") &&
+    !op.includes("CAUC ")
+  ) {
+    if (
+      op.includes("VENTA") &&
+      (op.includes("ACTIVO") ||
+        op.includes("ACCION") ||
+        op.includes("BONO") ||
+        op.includes("CEDEAR") ||
+        op.includes("INSTRUMENT") ||
+        op.includes("TITULO"))
+    ) {
+      return false;
+    }
+    if (
+      op.includes("COMPRA") &&
+      (op.includes("ACTIVO") ||
+        op.includes("ACCION") ||
+        op.includes("BONO") ||
+        op.includes("CEDEAR") ||
+        op.includes("INSTRUMENT") ||
+        op.includes("TITULO"))
+    ) {
+      return true;
+    }
+    if (
+      (op.startsWith("COMPRA") || op.includes(" COMPRA")) &&
+      !op.includes("CAUCION")
+    ) {
+      return true;
+    }
+    if (
+      (op.startsWith("VENTA") || op.includes(" VENTA")) &&
+      !op.includes("CAUCION")
+    ) {
+      return false;
+    }
+  }
+
   const d = normalizarTextoComparacion(String(m.descripcion || ""));
   if (d.includes("TRANSFERENCIA") && d.includes("EXTERNA")) {
     if (d.includes("CREDITO")) return true;
@@ -490,7 +953,7 @@ export function tipoCambioLado(m) {
   }
 
   const cantCero = m.cantidad == null || Math.abs(m.cantidad) < 1e-9;
-  if (cantCero && esIngresoTituloSinPeps(m.descripcion)) {
+  if (cantCero && esIngresoTituloSinPeps(m.descripcion, m.operacionBroker)) {
     if (imp != null && imp > 0) return "vendedor";
     if (imp != null && imp < 0) return "comprador";
     return "mid";
@@ -527,7 +990,7 @@ function cmpFechaConcertacionFila(a, b) {
 function prioridadOrdenPepsMismoTicker(m) {
   const cant = m.cantidad;
   const cero = cant == null || Math.abs(cant) < 1e-9;
-  if (cero && esIngresoTituloSinPeps(m.descripcion)) return 1;
+  if (cero && esIngresoTituloSinPeps(m.descripcion, m.operacionBroker)) return 1;
   if (cant != null && cant > 0) return 0;
   if (cant != null && cant < 0) return 2;
   return esCompra(m) ? 0 : 2;
@@ -634,7 +1097,8 @@ export function procesarCuentaComitente(tenenciasLotes, movimientos) {
   const detalleMovs = [];
   let resultadoEjercicio = 0;
 
-  for (const m of movimientos) {
+  for (const raw of movimientos) {
+    const m = priorizarOperacionCajaSobreTicker(raw);
     const tick = m.ticker;
     const cantM = m.cantidad;
     const cantidadCeroM =
@@ -663,7 +1127,7 @@ export function procesarCuentaComitente(tenenciasLotes, movimientos) {
     }
 
     if (!tick) {
-      const tipo = clasificarFlujoCaja(m.descripcion);
+      const tipo = clasificarFlujoCaja(m.descripcion, m.operacionBroker);
       const imp = m.importe != null ? m.importe : 0;
       if (tipo && cashFlows[tipo] !== undefined) {
         cashFlows[tipo] += imp;
@@ -683,9 +1147,12 @@ export function procesarCuentaComitente(tenenciasLotes, movimientos) {
       continue;
     }
 
-    if (cantidadCeroM && esIngresoTituloSinPeps(m.descripcion)) {
+    if (cantidadCeroM && esIngresoTituloSinPeps(m.descripcion, m.operacionBroker)) {
       const imp = m.importe != null ? m.importe : 0;
-      const bucket = clasificarIngresoTituloSinPeps(m.descripcion);
+      const bucket = clasificarIngresoTituloSinPeps(
+        m.descripcion,
+        m.operacionBroker
+      );
       if (bucket === "dividendo") {
         cashFlows.ingresos_dividendos += imp;
       } else if (bucket === "renta_y_amortizacion") {

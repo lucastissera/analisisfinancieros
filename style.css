@@ -293,3 +293,33 @@ button:disabled {
   color: var(--loss);
   border-color: rgba(248, 113, 113, 0.45);
 }
+
+.app-footer {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  z-index: 50;
+  padding: 0.5rem 1rem 0.75rem;
+  max-width: min(100%, 34rem);
+}
+
+.app-footer p {
+  margin: 0;
+}
+
+.app-footer__copyright + .app-footer__legal {
+  margin-top: 0.35rem;
+}
+
+.app-footer small {
+  font-size: 0.72rem;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+  line-height: 1.4;
+}
+
+.app-footer__legal small {
+  font-size: 0.64rem;
+  line-height: 1.45;
+  opacity: 0.92;
+}
