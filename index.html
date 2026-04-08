@@ -118,17 +118,11 @@
         <section class="card">
           <h2>Movimientos del período</h2>
           <p class="hint">
-            Fila 1: títulos reconocibles (el orden de las columnas puede ser cualquiera; con o sin tildes
-            en las palabras, da igual). Incluí: fecha de concertación (o «fecha» + concertación),
-            descripción, cantidad, precio, importe o monto o total; opcionales: ticker, tipo de instrumento,
-            fecha de liquidación, moneda.             Si la primera fila no se reconoce, se asume el formato fijo A–I como antes.
-            Algunos brokers (p. ej. Inviu) no traen columna Ticker: el código se toma del inicio de la
-            descripción con el patrón «TICKER | …» y la columna «Operación» define compra/venta, caja,
-            caución, dividendos, etc.             El tipo de activo (CEDEAR, bono, acción local, etc.) se infiere por
-            heurística y listas BYMA/CNV de uso común (sin API obligatoria); las listas se pueden
-            ampliar con símbolos tomados de Comafi, TradingView u otros listados públicos.
-            En Inviu, «CC» y «CT» en descripción u operación indican caución colocadora o tomadora;
-            no se interpretan como ticker de activo.
+            Elegí el <strong>broker del extracto</strong> antes de la moneda del informe.
+            Para <strong>Balanz</strong> e <strong>Inviu</strong> la primera fila define columnas por nombre
+            (orden libre, con o sin tildes); si no se reconocen los encabezados obligatorios, se usa el formato fijo A–I.
+            Solo <strong>Inviu</strong>: columna «Operación», ticker en descripción «TICKER | …» si no hay columna ticker,
+            reglas CC/CT para caución e inferencia de tipo de activo (heurística / listas BYMA-CNV; ampliable con Comafi, TradingView, etc.).
             Los CEDEARs y demás tickers pueden venir intercalados: se agrupa por
             ticker, se ordena por fecha (las filas con fechas anteriores van
             primero aunque estén más abajo en el archivo) y el mismo día las
@@ -147,6 +141,13 @@
             aplica tipo de cambio y los totales pueden mezclar monedas (ver nota en resultados).
           </p>
           <div class="actions cc-movs-actions">
+            <div class="field cc-broker-field">
+              <label for="ccBrokerMovs">Broker del extracto</label>
+              <select id="ccBrokerMovs">
+                <option value="BALANZ" selected>Balanz</option>
+                <option value="INVIU">Inviu</option>
+              </select>
+            </div>
             <div class="field cc-moneda-informe-field">
               <label for="ccMonedaInforme">Moneda del informe</label>
               <select id="ccMonedaInforme">

@@ -8,6 +8,8 @@ import {
   esTipoCorporativos,
   detectarMapaColumnasMovimientos,
   MAPA_LEGACY_MOVIMIENTOS,
+  CC_BROKER_BALANZ,
+  CC_BROKER_INVIU,
 } from "./cc-engine.js";
 import {
   fechaIsoLocal,
@@ -94,32 +96,59 @@ function leerExcelHojaTenencias(data) {
 }
 
 /**
- * Movimientos CC: fila 1 = encabezados reconocidos o, si falla la detección, orden A–I legacy.
+ * Fila 1 = encabezados: se detectan columnas por nombre (orden libre, con o sin tildes).
+ * Si no se encuentran las obligatorias, fallback orden A–I (comportamiento legacy).
+ * La distinción Balanz / Inviu aplica en el parseo (cc-engine), no en la lectura del mapa.
  */
-function leerExcelMovimientosCC(data) {
+function leerExcelMovimientosCC(data, broker = CC_BROKER_BALANZ) {
   const all = leerPrimeraHojaFilas2D(data);
   if (!all.length) {
     return {
       filasDatos: [],
       mapa: MAPA_LEGACY_MOVIMIENTOS,
       cabeceras: [],
+      broker,
     };
   }
   const cabeceras = all[0].map((c) => String(c ?? ""));
+  const filasDatos = all.slice(1).map((row) => [...row]);
   try {
     const mapa = detectarMapaColumnasMovimientos(all[0]);
     return {
-      filasDatos: all.slice(1).map((row) => [...row]),
+      filasDatos,
       mapa,
       cabeceras,
+      broker,
     };
   } catch {
     return {
-      filasDatos: all.slice(1).map((row) => [...row]),
+      filasDatos,
       mapa: MAPA_LEGACY_MOVIMIENTOS,
       cabeceras,
+      broker,
     };
   }
+}
+
+function leerCcBrokerDesdeUi() {
+  const el = $("ccBrokerMovs");
+  const v = el?.value;
+  if (v === CC_BROKER_INVIU) return CC_BROKER_INVIU;
+  return CC_BROKER_BALANZ;
+}
+
+function mensajeImportarMovsPendiente() {
+  const b = leerCcBrokerDesdeUi();
+  const base =
+    "Importá primero el Excel de movimientos del período (fila 1 con títulos reconocibles; " +
+    "el orden de las columnas puede variar; si no se detectan encabezados, se asume formato fijo A–I). ";
+  if (b === CC_BROKER_INVIU) {
+    return (
+      base +
+      "Inviu: además columna «Operación», ticker en descripción «TICKER | …» si aplica, e inferencia de tipo de activo."
+    );
+  }
+  return base + "Balanz: sin las reglas extra de Inviu (Operación, ticker en descripción, etc.).";
 }
 
 function crearFilaTenencia() {
@@ -250,7 +279,12 @@ function construirHojaOrigenConImporteConvertido(cotMap, monedaInforme) {
     const row = filasRaw[r];
     const wide = filaOrigenExcelAI(row);
     while (wide.length < ancho) wide.push("");
-    const mov = interpretarFilaMovimientoExcel(row, r + 2, mapa);
+    const mov = interpretarFilaMovimientoExcel(
+      row,
+      r + 2,
+      mapa,
+      meta?.broker ?? CC_BROKER_BALANZ
+    );
     let importeConv = "";
     let tcRef = "";
     let monedaOrig = "—";
@@ -782,6 +816,7 @@ async function ejecutarAnalisisCC() {
   const elCargando = $("ccFxCargando");
   const btnImport = $("btnImportarMovsCC");
   const selMoneda = $("ccMonedaInforme");
+  const selBroker = $("ccBrokerMovs");
   mostrarErrorCC("");
   let tenencias;
   try {
@@ -796,9 +831,7 @@ async function ejecutarAnalisisCC() {
 
   const filasMovs = window.__ccUltimasFilasMovs;
   if (!filasMovs?.filasDatos?.length) {
-    mostrarErrorCC(
-      "Importá primero el Excel de movimientos del período (fila 1 con títulos: fecha de concertación, descripción, cantidad, precio, importe o total; el orden de las columnas puede variar y las tildes en los títulos son opcionales)."
-    );
+    mostrarErrorCC(mensajeImportarMovsPendiente());
     $("ccPanelResultados").hidden = true;
     $("btnExportarCC").disabled = true;
     ccAnalisisEnCurso = false;
@@ -807,7 +840,11 @@ async function ejecutarAnalisisCC() {
 
   let movimientos;
   try {
-    movimientos = parsearMovimientosExcel(filasMovs.filasDatos, filasMovs.mapa).map((m) => ({
+    movimientos = parsearMovimientosExcel(
+      filasMovs.filasDatos,
+      filasMovs.mapa,
+      filasMovs.broker ?? leerCcBrokerDesdeUi()
+    ).map((m) => ({
       ...m,
       monedaNorm: normalizarMonedaColumna(m.moneda),
     }));
@@ -847,6 +884,7 @@ async function ejecutarAnalisisCC() {
       elCargando.hidden = false;
       btnImport.disabled = true;
       selMoneda.disabled = true;
+      if (selBroker) selBroker.disabled = true;
       cotMap = await obtenerCotizacionesPorFechas(new Set(fechasIso));
     } catch (e) {
       mostrarErrorCC(e.message || String(e));
@@ -855,12 +893,14 @@ async function ejecutarAnalisisCC() {
       elCargando.hidden = true;
       btnImport.disabled = false;
       selMoneda.disabled = false;
+      if (selBroker) selBroker.disabled = false;
       ccAnalisisEnCurso = false;
       return;
     } finally {
       elCargando.hidden = true;
       btnImport.disabled = false;
       selMoneda.disabled = false;
+      if (selBroker) selBroker.disabled = false;
     }
   }
 
@@ -963,6 +1003,23 @@ $("ccMonedaInforme").addEventListener("change", () => {
   if (window.__ccUltimasFilasMovs) void ejecutarAnalisisCC();
 });
 
+const elBrokerMovs = $("ccBrokerMovs");
+if (elBrokerMovs) {
+  elBrokerMovs.addEventListener("change", () => {
+    const buf = window.__ccUltimoBufferMovs;
+    if (!buf) return;
+    try {
+      window.__ccUltimasFilasMovs = leerExcelMovimientosCC(
+        buf,
+        leerCcBrokerDesdeUi()
+      );
+      void ejecutarAnalisisCC();
+    } catch (e) {
+      mostrarErrorCC(e.message || String(e));
+    }
+  });
+}
+
 $("btnImportarTenenciasCC").addEventListener("click", () => {
   $("fileTenenciasCC").click();
 });
@@ -1006,7 +1063,11 @@ $("fileMovsCC").addEventListener("change", async (ev) => {
   mostrarErrorCC("");
   try {
     const buf = await file.arrayBuffer();
-    window.__ccUltimasFilasMovs = leerExcelMovimientosCC(buf);
+    window.__ccUltimoBufferMovs = buf.slice(0);
+    window.__ccUltimasFilasMovs = leerExcelMovimientosCC(
+      buf,
+      leerCcBrokerDesdeUi()
+    );
     await ejecutarAnalisisCC();
   } catch (e) {
     mostrarErrorCC(e.message || String(e));

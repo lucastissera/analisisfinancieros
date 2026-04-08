@@ -5,6 +5,15 @@
 
 import { inferirTipoActivoArgentinorSync } from "./cc-instrumentos-arg.js";
 
+/** Extractos formato Balanz (columnas A–I fijas, fila 1 títulos). */
+export const CC_BROKER_BALANZ = "BALANZ";
+/** Extractos Inviu: columnas flexibles, «Operación», ticker en descripción «TICKER | …», etc. */
+export const CC_BROKER_INVIU = "INVIU";
+
+export function esBrokerInviu(broker) {
+  return broker === CC_BROKER_INVIU;
+}
+
 function parseNumAR(v) {
   if (v === null || v === undefined) return null;
   if (typeof v === "number" && Number.isFinite(v)) return v;
@@ -358,8 +367,14 @@ export function detectarMapaColumnasMovimientos(cabecerasRaw) {
 
 /**
  * Movimientos: filas de datos + mapa de columnas (MAPA_LEGACY_MOVIMIENTOS = orden A–I antiguo).
+ * @param {string} [broker=CC_BROKER_BALANZ] CC_BROKER_INVIU activa columnas flexibles, Operación, ticker en descripción e inferencia de tipo de activo.
  */
-export function parsearMovimientosExcel(filas, mapa = MAPA_LEGACY_MOVIMIENTOS) {
+export function parsearMovimientosExcel(
+  filas,
+  mapa = MAPA_LEGACY_MOVIMIENTOS,
+  broker = CC_BROKER_BALANZ
+) {
+  const inviu = esBrokerInviu(broker);
   const ops = [];
   for (let r = 0; r < filas.length; r++) {
     const row = filas[r];
@@ -376,12 +391,12 @@ export function parsearMovimientosExcel(filas, mapa = MAPA_LEGACY_MOVIMIENTOS) {
       throw new Error(`Movimientos fila ${r + 2}: fecha de concertación inválida.`);
     }
     const descripcion = String(leerCeldaMovimiento(row, mapa.descripcion) ?? "");
-    const operacionBroker = String(
-      leerCeldaMovimiento(row, mapa.operacion ?? -1) ?? ""
-    ).trim();
+    const operacionBroker = inviu
+      ? String(leerCeldaMovimiento(row, mapa.operacion ?? -1) ?? "").trim()
+      : "";
     let tickerCol = String(leerCeldaMovimiento(row, mapa.ticker) ?? "").trim();
     let tickerExtraidoDesdeDesc = false;
-    if (!tickerCol) {
+    if (inviu && !tickerCol) {
       const ext = extraerTickerPrefijoDescripcionInviu(descripcion);
       if (ext) {
         tickerCol = ext;
@@ -403,9 +418,10 @@ export function parsearMovimientosExcel(filas, mapa = MAPA_LEGACY_MOVIMIENTOS) {
     const moneda = leerCeldaMovimiento(row, mapa.moneda);
     const importe = parseNumAR(leerCeldaMovimiento(row, mapa.importe));
 
-    const tipoAct = ticker
-      ? inferirTipoActivoArgentinorSync(ticker)
-      : { tipo: null, fuente: "—" };
+    const tipoAct =
+      inviu && ticker
+        ? inferirTipoActivoArgentinorSync(ticker)
+        : { tipo: null, fuente: "—" };
 
     const cantidadCero =
       cantidad == null || Math.abs(Number(cantidad) || 0) < 1e-9;
@@ -433,6 +449,7 @@ export function parsearMovimientosExcel(filas, mapa = MAPA_LEGACY_MOVIMIENTOS) {
       moneda,
       importe,
       filaExcel: r + 2,
+      broker,
       operacionBroker,
       tickerExtraidoDesdeDescripcion: tickerExtraidoDesdeDesc,
       tipoActivoInferido: tipoAct.tipo,
@@ -455,8 +472,10 @@ export function parsearMovimientosExcel(filas, mapa = MAPA_LEGACY_MOVIMIENTOS) {
 export function interpretarFilaMovimientoExcel(
   row,
   filaExcel,
-  mapa = MAPA_LEGACY_MOVIMIENTOS
+  mapa = MAPA_LEGACY_MOVIMIENTOS,
+  broker = CC_BROKER_BALANZ
 ) {
+  const inviu = esBrokerInviu(broker);
   const fechaRaw = leerCeldaMovimiento(row, mapa.fechaConc);
   if (
     fechaRaw === undefined ||
@@ -470,12 +489,12 @@ export function interpretarFilaMovimientoExcel(
     return null;
   }
   const descripcion = String(leerCeldaMovimiento(row, mapa.descripcion) ?? "");
-  const operacionBroker = String(
-    leerCeldaMovimiento(row, mapa.operacion ?? -1) ?? ""
-  ).trim();
+  const operacionBroker = inviu
+    ? String(leerCeldaMovimiento(row, mapa.operacion ?? -1) ?? "").trim()
+    : "";
   let tickerCol = String(leerCeldaMovimiento(row, mapa.ticker) ?? "").trim();
   let tickerExtraidoDesdeDesc = false;
-  if (!tickerCol) {
+  if (inviu && !tickerCol) {
     const ext = extraerTickerPrefijoDescripcionInviu(descripcion);
     if (ext) {
       tickerCol = ext;
@@ -497,9 +516,10 @@ export function interpretarFilaMovimientoExcel(
   const moneda = leerCeldaMovimiento(row, mapa.moneda);
   const importe = parseNumAR(leerCeldaMovimiento(row, mapa.importe));
 
-  const tipoAct = ticker
-    ? inferirTipoActivoArgentinorSync(ticker)
-    : { tipo: null, fuente: "—" };
+  const tipoAct =
+    inviu && ticker
+      ? inferirTipoActivoArgentinorSync(ticker)
+      : { tipo: null, fuente: "—" };
 
   const cantidadCero =
     cantidad == null || Math.abs(Number(cantidad) || 0) < 1e-9;
@@ -525,6 +545,7 @@ export function interpretarFilaMovimientoExcel(
     moneda,
     importe,
     filaExcel,
+    broker,
     operacionBroker,
     tickerExtraidoDesdeDescripcion: tickerExtraidoDesdeDesc,
     tipoActivoInferido: tipoAct.tipo,
@@ -583,6 +604,7 @@ export function aplicaConsolidacionCodigoOperacion(
  * Depósito/retiro explícito en «Operación»: no usar ticker inferido de la descripción (Inviu).
  */
 function priorizarOperacionCajaSobreTicker(m) {
+  if (!esBrokerInviu(m.broker ?? CC_BROKER_BALANZ)) return m;
   const o = normalizarTextoComparacion(String(m.operacionBroker || ""));
   if (!o) return m;
   const solo = clasificarFlujoCajaSoloOperacion(o);
@@ -792,11 +814,15 @@ function clasificarFlujoCajaSoloOperacion(oNorm) {
 
 /**
  * Sin ticker: clasificar por descripción (orden: caución antes que cobro/pago genéricos).
- * Si hay columna «Operación», se usa primero para brokers tipo Inviu.
+ * Columna «Operación» y reglas CC|/CT| solo aplican a extractos Inviu.
  */
-export function clasificarFlujoCaja(descripcion, operacionBroker = "") {
+export function clasificarFlujoCaja(
+  descripcion,
+  operacionBroker = "",
+  broker = CC_BROKER_BALANZ
+) {
   const o = normalizarTextoComparacion(operacionBroker || "");
-  if (o) {
+  if (esBrokerInviu(broker) && o) {
     const porOp = clasificarFlujoCajaSoloOperacion(o);
     if (porOp) return porOp;
   }
@@ -809,8 +835,10 @@ export function clasificarFlujoCaja(descripcion, operacionBroker = "") {
   if (d.includes("APTOMCON")) return "pedido_caucion_tomadora";
   if (d.includes("APTOMFUT")) return "pagado_caucion_tomadora";
 
-  const inviuDesc = clasificarCaucionInviuDesdeDescripcionNormalizada(d);
-  if (inviuDesc) return inviuDesc;
+  if (esBrokerInviu(broker)) {
+    const inviuDesc = clasificarCaucionInviuDesdeDescripcionNormalizada(d);
+    if (inviuDesc) return inviuDesc;
+  }
 
   if (d.includes("COBRO")) return "ingresos_cuenta";
   if (d.includes("PAGO")) return "salidas_cuenta";
@@ -863,8 +891,10 @@ function clasificarCaucionInviuDesdeDescripcionNormalizada(d) {
 
 function esCompra(m) {
   const op = normalizarTextoComparacion(String(m.operacionBroker || ""));
+  const br = m.broker ?? CC_BROKER_BALANZ;
   /* Inviu: operación que empieza con CC/CT = caución, no compra/venta de activo por esta vía. */
   if (
+    esBrokerInviu(br) &&
     op &&
     !op.startsWith("CC") &&
     !op.startsWith("CT") &&
@@ -1127,7 +1157,11 @@ export function procesarCuentaComitente(tenenciasLotes, movimientos) {
     }
 
     if (!tick) {
-      const tipo = clasificarFlujoCaja(m.descripcion, m.operacionBroker);
+      const tipo = clasificarFlujoCaja(
+        m.descripcion,
+        m.operacionBroker,
+        m.broker ?? CC_BROKER_BALANZ
+      );
       const imp = m.importe != null ? m.importe : 0;
       if (tipo && cashFlows[tipo] !== undefined) {
         cashFlows[tipo] += imp;
