@@ -21,10 +21,13 @@ import {
   tipoCambioReferenciaUsado,
 } from "./cc-fx.js";
 import { obtenerCotizacionesPorFechas } from "./cc-fx-rates.js";
+import { inferirTipoActivoArgentinorSync } from "./cc-instrumentos-arg.js";
 
 const $ = (id) => document.getElementById(id);
 
 let ultimoResultadoCC = null;
+/** Broker usado en el último análisis CC (formato Excel Inviu). */
+let ultimoBrokerMovsCC = CC_BROKER_BALANZ;
 let ultimoNombreMovs = "movimientos.xlsx";
 /** @type {'ARS'|'USD'|'CV7000'|'ORIGEN'} */
 let ultimoMonedaInforme = "ARS";
@@ -46,6 +49,47 @@ function fmtNum(n, dec = 2) {
     minimumFractionDigits: dec,
     maximumFractionDigits: dec,
   });
+}
+
+function clonarAoaFormatearNumerosInviu(aoa) {
+  return aoa.map((row) => {
+    if (!Array.isArray(row)) return row;
+    return row.map((cell) =>
+      typeof cell === "number" && Number.isFinite(cell)
+        ? fmtNum(cell, 2)
+        : cell
+    );
+  });
+}
+
+function ajustarAnchosColumnasHoja(ws, XLSX) {
+  if (!ws["!ref"]) return;
+  const range = XLSX.utils.decode_range(ws["!ref"]);
+  const cols = [];
+  for (let C = range.s.c; C <= range.e.c; C++) {
+    let maxw = 10;
+    for (let R = range.s.r; R <= range.e.r; R++) {
+      const addr = XLSX.utils.encode_cell({ r: R, c: C });
+      const cell = ws[addr];
+      if (!cell || cell.v == null || cell.v === "") continue;
+      const len = String(cell.v).length;
+      if (len > maxw) maxw = len;
+    }
+    cols.push({ wch: Math.min(maxw + 2, 100) });
+  }
+  ws["!cols"] = cols;
+}
+
+function sheetDesdeAoaConEstilo(XLSX, aoa, esInviu) {
+  const data = esInviu ? clonarAoaFormatearNumerosInviu(aoa) : aoa;
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  ajustarAnchosColumnasHoja(ws, XLSX);
+  return ws;
+}
+
+function bookAppendAoa(wb, XLSX, aoa, nombreHoja, esInviu) {
+  const ws = sheetDesdeAoaConEstilo(XLSX, aoa, esInviu);
+  XLSX.utils.book_append_sheet(wb, ws, nombreHoja);
 }
 
 function parseNumLocal(v) {
@@ -346,10 +390,16 @@ function etiquetaTipoActivoInferido(d) {
   return String(t);
 }
 
-/** Inviu: mismo activo con códigos distintos; la columna muestra PEPS + código del archivo si difiere. */
-function etiquetaTickerDetalleExcel(d) {
+/** Inviu: mismo activo con códigos distintos; la columna muestra PEPS + código del archivo si difiere (salvo export puntuales). */
+function etiquetaTickerDetalleExcel(d, opts = {}) {
   const c = d.ticker || "";
   const a = d.tickerArchivo;
+  if (
+    opts.inviuCompraSinParentesisTicker &&
+    esBrokerInviu(d.broker ?? CC_BROKER_BALANZ)
+  ) {
+    return c || "—";
+  }
   if (a && c && String(a) !== String(c)) return `${c} (${a})`;
   return c || "—";
 }
@@ -360,10 +410,10 @@ function etiquetaNombreActivoInviu(d) {
   return n && String(n).trim() !== "" ? n : "—";
 }
 
-function filaDetalleMovimientoExcel(d) {
+function filaDetalleMovimientoExcel(d, opts = {}) {
   return [
     fmtFecha(d.fechaConc),
-    etiquetaTickerDetalleExcel(d),
+    etiquetaTickerDetalleExcel(d, opts),
     etiquetaNombreActivoInviu(d),
     d.operacionBroker || "—",
     etiquetaTipoActivoInferido(d),
@@ -427,6 +477,8 @@ function etiquetaRubroTipoLinea(tipoLinea) {
     ingreso_amortizacion: "Amortización",
     sin_clasificar: "Sin clasificar",
     concepto_a_definir: "Concepto a definir",
+    fci_liquidacion_suscripcion: "FCI — liquidación de suscripción",
+    fci_liquidacion_rescate: "FCI — liquidación de rescate",
     sin_linea: "Sin tipo de línea",
     compra: "Compras (PEPS)",
     venta: "Ventas (PEPS)",
@@ -491,16 +543,51 @@ function esTipoInstrumentoBono(tipoInstrumento) {
 
 /**
  * Clase de instrumento para hojas PEPS (compra/venta).
+ * Inviu: no hay columna de tipo; usa solo tipo inferido (descripción + ticker en cc-engine).
  * @returns {'acciones'|'cedears'|'corporativos'|'bonos'|null}
  */
 function claseInstrumentoPeps(d) {
   if (!esOperacionPepsMovimiento(d)) return null;
+  if (esBrokerInviu(d.broker ?? CC_BROKER_BALANZ)) {
+    let inf = d.tipoActivoInferido;
+    if (inf === "corporativos") return "corporativos";
+    if (inf === "accion_ar") return "acciones";
+    if (inf === "cedear") return "cedears";
+    if (inf === "bono_ons" || inf === "letra") return "bonos";
+    if (
+      (inf === "accion_cedear_u_otro" ||
+        inf == null ||
+        inf === "otro" ||
+        inf === "sin_ticker") &&
+      d.ticker
+    ) {
+      inf = inferirTipoActivoArgentinorSync(d.ticker).tipo;
+    }
+    if (inf === "accion_ar") return "acciones";
+    if (inf === "cedear") return "cedears";
+    if (inf === "bono_ons" || inf === "letra") return "bonos";
+    return null;
+  }
   const ti = d.tipoInstrumento;
   if (esTipoCorporativos(ti)) return "corporativos";
-  const t = normalizarTextoComparacion(String(ti ?? "").trim());
-  if (t.includes("CEDEAR")) return "cedears";
+  const tCol = normalizarTextoComparacion(String(ti ?? "").trim());
+  if (tCol.includes("CEDEAR")) return "cedears";
   if (esTipoInstrumentoBono(ti)) return "bonos";
-  if (t.includes("ACCION")) return "acciones";
+  if (tCol.includes("ACCION")) return "acciones";
+
+  let inf = d.tipoActivoInferido;
+  if (
+    (inf === "accion_cedear_u_otro" ||
+      inf == null ||
+      inf === "otro" ||
+      inf === "sin_ticker") &&
+    d.ticker
+  ) {
+    inf = inferirTipoActivoArgentinorSync(d.ticker).tipo;
+  }
+  if (inf === "accion_ar") return "acciones";
+  if (inf === "cedear") return "cedears";
+  if (inf === "bono_ons" || inf === "letra") return "bonos";
   return null;
 }
 
@@ -526,6 +613,12 @@ function ordenarPorTickerLuegoFecha(dets) {
 
 function filaExcluidaDeHojaRubroPorTipo(d, tipoLineaKey) {
   if (tipoLineaKey === "ingreso_dividendo") return true;
+  if (
+    tipoLineaKey === "fci_liquidacion_suscripcion" ||
+    tipoLineaKey === "fci_liquidacion_rescate"
+  ) {
+    return true;
+  }
   if (
     tipoLineaKey === "ingreso_renta" ||
     tipoLineaKey === "ingreso_renta_y_amortizacion" ||
@@ -594,6 +687,13 @@ function movimientosAgrupadosPorClase(detalle, clase) {
     case "dividendos":
       rows = detalle.filter((d) => d.tipoLinea === "ingreso_dividendo");
       break;
+    case "fci":
+      rows = detalle.filter(
+        (d) =>
+          d.tipoLinea === "fci_liquidacion_suscripcion" ||
+          d.tipoLinea === "fci_liquidacion_rescate"
+      );
+      break;
     default:
       rows = [];
   }
@@ -609,7 +709,8 @@ function appendHojaAgrupadaClase(
   filaFn,
   nombresReservados,
   nombreHojaSheet,
-  sumarCostoOrigenPeps
+  sumarCostoOrigenPeps,
+  esInviu
 ) {
   let sumImp = 0;
   for (const d of rows) {
@@ -632,13 +733,14 @@ function appendHojaAgrupadaClase(
     nombreHojaSheet != null ? nombreHojaSheet : tituloFila,
     nombresReservados
   );
-  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const ws = sheetDesdeAoaConEstilo(XLSX, aoa, esInviu);
   XLSX.utils.book_append_sheet(wb, ws, nombre);
 }
 
 function exportarExcelCC(resultado) {
   const XLSX = window.XLSX;
   const cf = resultado.cashFlows;
+  const esInviu = esBrokerInviu(ultimoBrokerMovsCC);
 
   const notaCotizacion =
     ultimoMonedaInforme === "ORIGEN"
@@ -662,6 +764,8 @@ function exportarExcelCC(resultado) {
     ["Prestado Caución Colocadora", cf.suscripcion_caucion_colocadora],
     ["Pedido Caución Tomadora", cf.pedido_caucion_tomadora ?? 0],
     ["Pagado Caución Tomadora", cf.pagado_caucion_tomadora ?? 0],
+    ["Liquidación FCI — suscripción", cf.fci_liquidacion_suscripcion ?? 0],
+    ["Liquidación FCI — rescate", cf.fci_liquidacion_rescate ?? 0],
     ["Dividendos en efectivo (sin PEPS)", cf.ingresos_dividendos ?? 0],
     ["Renta y amortización", cf.ingresos_renta_y_amortizacion ?? 0],
     ["Renta (sin PEPS)", cf.ingresos_renta ?? 0],
@@ -740,20 +844,16 @@ function exportarExcelCC(resultado) {
     monedaOriginalCelda({ moneda: p.monedaOrigen }),
   ]);
 
-  const wsRes = XLSX.utils.aoa_to_sheet(resumen);
-  const wsDet = XLSX.utils.aoa_to_sheet([cabDet, ...filasDet]);
-  const wsPend = XLSX.utils.aoa_to_sheet([cabPend, ...filasPend]);
   const aoaOrigen = construirHojaOrigenConImporteConvertido(
     ultimoCotizacionesCC,
     ultimoMonedaInforme
   );
-  const wsOrigen = XLSX.utils.aoa_to_sheet(aoaOrigen);
 
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, wsRes, "Resumen");
-  XLSX.utils.book_append_sheet(wb, wsDet, "Detalle movimientos");
-  XLSX.utils.book_append_sheet(wb, wsPend, "Activos en tenencia");
-  XLSX.utils.book_append_sheet(wb, wsOrigen, "Origen importado");
+  bookAppendAoa(wb, XLSX, resumen, "Resumen", esInviu);
+  bookAppendAoa(wb, XLSX, [cabDet, ...filasDet], "Detalle movimientos", esInviu);
+  bookAppendAoa(wb, XLSX, [cabPend, ...filasPend], "Activos en tenencia", esInviu);
+  bookAppendAoa(wb, XLSX, aoaOrigen, "Origen importado", esInviu);
 
   const nombresReservados = new Set([
     "Resumen",
@@ -783,11 +883,14 @@ function exportarExcelCC(resultado) {
       ["Total importe (suma algebraica)", sumImp],
       [],
       cabDet,
-      ...rows.map((d) => filaDetalleMovimientoExcel(d)),
+      ...rows.map((d) =>
+        filaDetalleMovimientoExcel(d, {
+          inviuCompraSinParentesisTicker: tipo === "compra",
+        })
+      ),
     ];
     const nombreHoja = nombreHojaExcelUnico(label, nombresReservados);
-    const wsRubro = XLSX.utils.aoa_to_sheet(aoaRubro);
-    XLSX.utils.book_append_sheet(wb, wsRubro, nombreHoja);
+    bookAppendAoa(wb, XLSX, aoaRubro, nombreHoja, esInviu);
   }
 
   if (!porTipo.has("concepto_a_definir")) {
@@ -799,8 +902,7 @@ function exportarExcelCC(resultado) {
       cabDet,
     ];
     const nombreHojaConcepto = nombreHojaExcelUnico(label, nombresReservados);
-    const wsConcepto = XLSX.utils.aoa_to_sheet(aoaConcepto);
-    XLSX.utils.book_append_sheet(wb, wsConcepto, nombreHojaConcepto);
+    bookAppendAoa(wb, XLSX, aoaConcepto, nombreHojaConcepto, esInviu);
   }
 
   const hojasAgrupadas = [
@@ -816,6 +918,7 @@ function exportarExcelCC(resultado) {
     ["Renta (sin PEPS)", "renta_sin_peps", null],
     ["Amortizacion", "amortizacion_sin_renta", null],
     ["Dividendos", "dividendos", null],
+    ["FCI", "fci", "FCI"],
   ];
   for (const [titulo, clase, nombreHoja] of hojasAgrupadas) {
     const rowsAgr = movimientosAgrupadosPorClase(resultado.detalleMovs, clase);
@@ -829,7 +932,8 @@ function exportarExcelCC(resultado) {
       esPeps ? filaDetalleMovimientoExcelHojaPeps : filaDetalleMovimientoExcel,
       nombresReservados,
       nombreHoja,
-      esPeps
+      esPeps,
+      esInviu
     );
   }
 
@@ -857,6 +961,7 @@ async function ejecutarAnalisisCC() {
   }
 
   const filasMovs = window.__ccUltimasFilasMovs;
+  ultimoBrokerMovsCC = filasMovs?.broker ?? leerCcBrokerDesdeUi();
   if (!filasMovs?.filasDatos?.length) {
     mostrarErrorCC(mensajeImportarMovsPendiente());
     $("ccPanelResultados").hidden = true;

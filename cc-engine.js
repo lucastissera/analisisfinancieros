@@ -145,16 +145,59 @@ export function extraerNombreActivoDesdeDescripcionInviu(descripcion) {
 }
 
 /**
- * Inviu: columna «Tipo de instrumento» con CEDEAR refuerza la clasificación cuando el ticker
- * canónico (p. ej. TSLA desde TSLAD) queda como heurística genérica u «otro».
+ * Inviu: el extracto no incluye columna fiable de tipo; se analiza el texto
+ * «TICKER | Nombre — …» y el resto de la descripción.
+ * @returns {{ tipo: string, fuente: string } | null} null si no hay señal clara en el texto.
  */
-function complementarTipoActivoInviuConColumna(tipoAct, ticker, tipoInstrumentoCol) {
-  if (!ticker || !tipoAct) return tipoAct;
-  const ti = normalizarTextoComparacion(String(tipoInstrumentoCol ?? ""));
-  if (!ti.includes("CEDEAR")) return tipoAct;
-  if (["bono_ons", "letra", "fci", "accion_ar"].includes(tipoAct.tipo)) return tipoAct;
-  if (tipoAct.tipo === "cedear") return tipoAct;
-  return { tipo: "cedear", fuente: "columna_tipo_Inviu" };
+function inferirTipoActivoSoloDesdeDescripcionInviu(descripcion) {
+  const d = normalizarTextoComparacion(String(descripcion ?? ""));
+  const nom = extraerNombreActivoDesdeDescripcionInviu(descripcion);
+  const n = nom ? normalizarTextoComparacion(nom) : "";
+  const blob = n ? `${d} ${n}` : d;
+
+  if (
+    blob.includes("CORPORATIV") ||
+    blob.includes("OBLIGACION NEGOCIABLE") ||
+    blob.includes("O.N.")
+  ) {
+    return { tipo: "corporativos", fuente: "descripcion_Inviu" };
+  }
+  if (blob.includes("CEDEAR")) {
+    return { tipo: "cedear", fuente: "descripcion_Inviu" };
+  }
+  if (
+    blob.includes("LEBAC") ||
+    blob.includes("LECAP") ||
+    blob.includes("LEFIS") ||
+    blob.includes("BOPREAL")
+  ) {
+    return { tipo: "letra", fuente: "descripcion_Inviu" };
+  }
+  if (/\bLETRA\b/.test(blob)) {
+    return { tipo: "letra", fuente: "descripcion_Inviu" };
+  }
+  if (
+    blob.includes("BONO") ||
+    (/\bOBLIGACION\b/.test(blob) && !blob.includes("OBLIGACION NEGOCIABLE"))
+  ) {
+    return { tipo: "bono_ons", fuente: "descripcion_Inviu" };
+  }
+  if (
+    (blob.includes("ACCIONES") || /\bACCION\b/.test(blob)) &&
+    !blob.includes("CEDEAR")
+  ) {
+    return { tipo: "accion_ar", fuente: "descripcion_Inviu" };
+  }
+  return null;
+}
+
+/**
+ * Inviu: prioriza palabras del activo en Descripción; si no basta, listas/heurística por ticker.
+ */
+function inferirTipoActivoMovimientoInviu(ticker, descripcion) {
+  const desdeDesc = inferirTipoActivoSoloDesdeDescripcionInviu(descripcion);
+  if (desdeDesc) return desdeDesc;
+  return inferirTipoActivoArgentinorSync(ticker);
 }
 
 function clasificarIngresoDesdeOperacionBroker(operacionBroker) {
@@ -182,15 +225,21 @@ function tienePalabraAmortizacion(dNormalizado) {
 }
 
 /**
- * Ingresos sobre el título sin PEPS (cantidad 0).
+ * Ingresos sobre el título sin PEPS (en Balanz suele ir con cantidad 0; en Inviu a veces cantidad ≠ 0).
  * Criterio: columna «Operación» (brokers tipo Inviu) y/o palabras en la descripción.
  * @returns {'dividendo'|'renta'|'renta_y_amortizacion'|'amortizacion'|null}
  */
-export function clasificarIngresoTituloSinPeps(descripcion, operacionBroker = "") {
+export function clasificarIngresoTituloSinPeps(
+  descripcion,
+  operacionBroker = "",
+  broker = CC_BROKER_BALANZ
+) {
   const desdeOp = clasificarIngresoDesdeOperacionBroker(operacionBroker);
   if (desdeOp) return desdeOp;
   const d = normalizarTextoComparacion(descripcion);
   if (d.includes("DIVIDENDO EN EFECTIVO")) return "dividendo";
+  /* Inviu: a veces el extracto dice solo «DIVIDENDO» o «… DIVIDENDO …» sin la frase fija de Balanz. */
+  if (esBrokerInviu(broker) && d.includes("DIVIDENDO")) return "dividendo";
   const tr = tienePalabraRenta(d);
   const ta = tienePalabraAmortizacion(d);
   if (tr && ta) return "renta_y_amortizacion";
@@ -199,8 +248,12 @@ export function clasificarIngresoTituloSinPeps(descripcion, operacionBroker = ""
   return null;
 }
 
-export function esIngresoTituloSinPeps(descripcion, operacionBroker = "") {
-  return clasificarIngresoTituloSinPeps(descripcion, operacionBroker) != null;
+export function esIngresoTituloSinPeps(
+  descripcion,
+  operacionBroker = "",
+  broker = CC_BROKER_BALANZ
+) {
+  return clasificarIngresoTituloSinPeps(descripcion, operacionBroker, broker) != null;
 }
 
 /** Oferta de canje / oferta temprana de canje (instrumentos corporativos). */
@@ -508,12 +561,7 @@ function unificarTickersInviuMismoNombreDescripcion(ops) {
     if (!t) return m;
     const canon = remap.get(t);
     if (!canon || canon === t) return m;
-    const tipoAct = inferirTipoActivoArgentinorSync(canon);
-    const tipoFin = complementarTipoActivoInviuConColumna(
-      tipoAct,
-      canon,
-      m.tipoInstrumento
-    );
+    const tipoFin = inferirTipoActivoMovimientoInviu(canon, m.descripcion);
     return {
       ...m,
       ticker: canon,
@@ -582,11 +630,8 @@ export function parsearMovimientosExcel(
 
     let tipoAct =
       inviu && ticker
-        ? inferirTipoActivoArgentinorSync(ticker)
+        ? inferirTipoActivoMovimientoInviu(ticker, descripcion)
         : { tipo: null, fuente: "—" };
-    if (inviu && ticker) {
-      tipoAct = complementarTipoActivoInviuConColumna(tipoAct, ticker, tipoInstrumento);
-    }
 
     const cantidadCero =
       cantidad == null || Math.abs(Number(cantidad) || 0) < 1e-9;
@@ -594,7 +639,7 @@ export function parsearMovimientosExcel(
     if (
       ticker &&
       cantidadCero &&
-      !esIngresoTituloSinPeps(descripcion, operacionBroker) &&
+      !esIngresoTituloSinPeps(descripcion, operacionBroker, broker) &&
       !esGastoCorreccionIvaODescubierto(descripcion) &&
       !esImpuestoRetencion(descripcion)
     ) {
@@ -691,11 +736,8 @@ export function interpretarFilaMovimientoExcel(
 
   let tipoAct =
     inviu && ticker
-      ? inferirTipoActivoArgentinorSync(ticker)
+      ? inferirTipoActivoMovimientoInviu(ticker, descripcion)
       : { tipo: null, fuente: "—" };
-  if (inviu && ticker) {
-    tipoAct = complementarTipoActivoInviuConColumna(tipoAct, ticker, tipoInstrumento);
-  }
 
   const cantidadCero =
     cantidad == null || Math.abs(Number(cantidad) || 0) < 1e-9;
@@ -703,7 +745,7 @@ export function interpretarFilaMovimientoExcel(
   if (
     ticker &&
     cantidadCero &&
-    !esIngresoTituloSinPeps(descripcion, operacionBroker) &&
+    !esIngresoTituloSinPeps(descripcion, operacionBroker, broker) &&
     !esGastoCorreccionIvaODescubierto(descripcion) &&
     !esImpuestoRetencion(descripcion)
   ) {
@@ -1017,6 +1059,9 @@ export function clasificarFlujoCaja(
   if (d.includes("APTOMCON")) return "pedido_caucion_tomadora";
   if (d.includes("APTOMFUT")) return "pagado_caucion_tomadora";
 
+  const fciLiq = clasificarFciLiquidacionDesdeDescripcion(d);
+  if (fciLiq) return fciLiq;
+
   if (esBrokerInviu(broker)) {
     const inviuDesc = clasificarCaucionInviuDesdeDescripcionNormalizada(d);
     if (inviuDesc) return inviuDesc;
@@ -1035,9 +1080,9 @@ function clasificarCaucionInviuDesdeDescripcionNormalizada(d) {
   const ctHead = d.startsWith("CT |") || d.startsWith("CT|");
   if (ccHead) {
     if (
-      d.includes("SUSCRIP") ||
       d.includes("APCOLCON") ||
-      (d.includes("INICIO") && d.includes("OPERACION"))
+      (d.includes("INICIO") && d.includes("OPERACION")) ||
+      (d.includes("SUSCRIP") && !d.includes("LIQUIDACION"))
     ) {
       return "suscripcion_caucion_colocadora";
     }
@@ -1048,6 +1093,10 @@ function clasificarCaucionInviuDesdeDescripcionNormalizada(d) {
       d.includes("VENC ") ||
       d.includes("LIQUIDACION")
     ) {
+      return "rescate_caucion_colocadora";
+    }
+    /* «CC | Caución colocadora» u otras líneas de caución colocadora sin palabras clave anteriores */
+    if (d.includes("COLOCADORA") || d.includes("CAUCION")) {
       return "rescate_caucion_colocadora";
     }
     return null;
@@ -1068,6 +1117,23 @@ function clasificarCaucionInviuDesdeDescripcionNormalizada(d) {
     }
     return null;
   }
+  return null;
+}
+
+/**
+ * FCI (sin ticker en fila): liquidación de suscripción / rescate de cuotapartes.
+ * Suscripción: aunque el extracto lleve prefijo CC| (custodia), va a FCI.
+ * Rescate FCI: no debe pisar liquidaciones de caución CC|/CT|.
+ */
+function clasificarFciLiquidacionDesdeDescripcion(d) {
+  if (!d.includes("LIQUIDACION")) return null;
+  if (d.includes("SUSCRIPCION")) return "fci_liquidacion_suscripcion";
+  const prefCauc =
+    d.startsWith("CC |") ||
+    d.startsWith("CC|") ||
+    d.startsWith("CT |") ||
+    d.startsWith("CT|");
+  if (d.includes("RESCATE") && !prefCauc) return "fci_liquidacion_rescate";
   return null;
 }
 
@@ -1165,7 +1231,11 @@ export function tipoCambioLado(m) {
   }
 
   const cantCero = m.cantidad == null || Math.abs(m.cantidad) < 1e-9;
-  if (cantCero && esIngresoTituloSinPeps(m.descripcion, m.operacionBroker)) {
+  const br = m.broker ?? CC_BROKER_BALANZ;
+  const ingresoTituloSinPeps =
+    esIngresoTituloSinPeps(m.descripcion, m.operacionBroker, br) &&
+    (cantCero || esBrokerInviu(br));
+  if (ingresoTituloSinPeps) {
     if (imp != null && imp > 0) return "vendedor";
     if (imp != null && imp < 0) return "comprador";
     return "mid";
@@ -1202,7 +1272,13 @@ function cmpFechaConcertacionFila(a, b) {
 function prioridadOrdenPepsMismoTicker(m) {
   const cant = m.cantidad;
   const cero = cant == null || Math.abs(cant) < 1e-9;
-  if (cero && esIngresoTituloSinPeps(m.descripcion, m.operacionBroker)) return 1;
+  const br = m.broker ?? CC_BROKER_BALANZ;
+  if (
+    esIngresoTituloSinPeps(m.descripcion, m.operacionBroker, br) &&
+    (cero || esBrokerInviu(br))
+  ) {
+    return 1;
+  }
   if (cant != null && cant > 0) return 0;
   if (cant != null && cant < 0) return 2;
   return esCompra(m) ? 0 : 2;
@@ -1321,6 +1397,8 @@ export function procesarCuentaComitente(tenenciasLotes, movimientos) {
     rescate_caucion_colocadora: 0,
     pedido_caucion_tomadora: 0,
     pagado_caucion_tomadora: 0,
+    fci_liquidacion_suscripcion: 0,
+    fci_liquidacion_rescate: 0,
     ingresos_dividendos: 0,
     ingresos_renta: 0,
     ingresos_renta_y_amortizacion: 0,
@@ -1388,11 +1466,16 @@ export function procesarCuentaComitente(tenenciasLotes, movimientos) {
       continue;
     }
 
-    if (cantidadCeroM && esIngresoTituloSinPeps(m.descripcion, m.operacionBroker)) {
+    const brProc = m.broker ?? CC_BROKER_BALANZ;
+    if (
+      esIngresoTituloSinPeps(m.descripcion, m.operacionBroker, brProc) &&
+      (cantidadCeroM || esBrokerInviu(brProc))
+    ) {
       const imp = m.importe != null ? m.importe : 0;
       const bucket = clasificarIngresoTituloSinPeps(
         m.descripcion,
-        m.operacionBroker
+        m.operacionBroker,
+        brProc
       );
       if (bucket === "dividendo") {
         cashFlows.ingresos_dividendos += imp;
