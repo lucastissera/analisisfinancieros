@@ -5,6 +5,10 @@
  * Heurística (ampliable): quitar sufijos de 1 letra (D, C, O) de *plaza*; el tronco puede ser de
  * cualquier longitud ≥1 (p. ej. BD→B Barrick Gold, AAPLD→AAPL, AL30D→AL30). Un ticker de 1 letra
  * sin sufijo (p. ej. «B») se deja igual.
+ *
+ * **P (pesos u otro tramo en ON):** solo si el símbolo contiene al menos un dígito, para no
+ * confundir con acciones que terminan en P (p. ej. PAMP). Ej.: YCA6P e YCA6O → mismo activo YCA6
+ * (BYMA/MAE: misma ON, distinto tramo/moneda según emisión).
  */
 
 function normSym(s) {
@@ -29,12 +33,18 @@ export function normalizarTickerActivoInviu(raw) {
     t = t.slice(0, -1);
   };
 
+  const tieneDigito = () => /\d/.test(t);
+
   // D: tramo dólar / MEP (AAPLD, GGALD, AL30D, IRCFD, …)
   stripFinal("D");
   // C: cable / C.V.
   stripFinal("C");
-  // O: tramo pesos en ON u otros (IRCF+O vs IRCF+D; mismo criterio que D/C, cualquier longitud de tronco)
+  // O: tramo en ON / panel (IRCF+O vs IRCF+D, YCA6O vs YCA6P+strip P, etc.)
   stripFinal("O");
+  // P: otro tramo en ON (p. ej. YCA6P vs YCA6O); solo con dígitos en el código → no afecta PAMP
+  if (t.endsWith("P") && t.length >= 2 && tieneDigito()) {
+    t = t.slice(0, -1);
+  }
 
   return t;
 }

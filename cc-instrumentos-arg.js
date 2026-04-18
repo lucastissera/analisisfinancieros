@@ -5,6 +5,10 @@
  * Para enriquecer listas (CEDEARs, panel local, etc.) se pueden usar exportaciones o pantallas de
  * Banco Comafi, TradingView, BYMA, CNV — este módulo no llama a la red; conviene pegar símbolos
  * en TICKERS_CEDEAR_COMUN / TICKERS_ACCION_AR o en un JSON futuro.
+ *
+ * ON corporativas: prospectos de emisión (YPF, CGC, San Miguel, etc.), listados BYMA/MAE y
+ * BYMADATA (open.bymadata.com.ar). Misma emisión puede cotizar con tramos distintos (p. ej. YCA6O /
+ * YCA6P → base YCA6 tras normalizar en cc-ticker-inviu).
  */
 
 function normTick(s) {
@@ -55,6 +59,23 @@ const TICKERS_ACCION_AR = new Set([
  * CEDEARs (subyacente extranjero) muy usados; lista ampliable (CNV/BYMA).
  * No implica que otros tickers no sean CEDEAR.
  */
+/**
+ * ON corporativas frecuentes (BYMA/BCBA/MAE), códigos base o sin sufijo de plaza.
+ * Ampliable con exportaciones de panel o prospectos.
+ */
+const TICKERS_ON_COMUN = new Set([
+  "IRCF",
+  "YCA6",
+  "YMCOO",
+  "YMCWO",
+  "CP28",
+  "CP31",
+  "CP33",
+  "CP35",
+  "SNS6",
+  "CAC2",
+]);
+
 const TICKERS_CEDEAR_COMUN = new Set([
   "AAPL",
   "MSFT",
@@ -97,6 +118,17 @@ function pareceBonoPorTicker(t) {
 }
 
 /**
+ * ON corporativa por patrón (letras + dígitos). Excluye panel ya listado como acción (p. ej. TGNO4).
+ * Convive con tickers ya normalizados (mismo subyacente en pesos/dólar).
+ */
+function pareceOnCorporativaPorTicker(t) {
+  if (TICKERS_ACCION_AR.has(t) || TICKERS_CEDEAR_COMUN.has(t)) return false;
+  if (pareceBonoPorTicker(t)) return false;
+  if (!/\d/.test(t)) return false;
+  return /^[A-Z]{2,4}\d/.test(t);
+}
+
+/**
  * @returns {{ tipo: string, fuente: string }}
  * tipo: bono_ons | letra | cedear | accion_ar | fci | otro
  */
@@ -110,6 +142,14 @@ export function inferirTipoActivoArgentinorSync(tickerRaw) {
 
   if (pareceBonoPorTicker(t)) {
     return { tipo: "bono_ons", fuente: "prefijo_cupon_BYMA" };
+  }
+
+  if (TICKERS_ON_COMUN.has(t)) {
+    return { tipo: "bono_ons", fuente: "lista_ON_BYMA" };
+  }
+
+  if (pareceOnCorporativaPorTicker(t)) {
+    return { tipo: "bono_ons", fuente: "patron_ON_corporativa" };
   }
 
   if (/^S\d{2}[A-Z]\d{1,2}$/.test(t) || /^S\d{2}[A-Z]{2,3}$/.test(t)) {
