@@ -12,6 +12,8 @@
  *
  * **CEDEARs:** mismo subyacente en pesos o dólar (p. ej. TSLA vs TSLAD): el sufijo **D** / **C** se
  * quita para PEPS; la inferencia de tipo usa el ticker canónico (p. ej. TSLA).
+ *
+ * **Bonos/ON con código alfanumérico + D:** p. ej. **BPJ5D** → **BPJ5** (misma emisión, otro tramo).
  */
 
 function normSym(s) {

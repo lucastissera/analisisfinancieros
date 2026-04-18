@@ -64,6 +64,7 @@ const TICKERS_ACCION_AR = new Set([
  * Ampliable con exportaciones de panel o prospectos.
  */
 const TICKERS_ON_COMUN = new Set([
+  "BPJ5",
   "IRCF",
   "YCA6",
   "YMCOO",
