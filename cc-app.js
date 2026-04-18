@@ -10,7 +10,9 @@ import {
   MAPA_LEGACY_MOVIMIENTOS,
   CC_BROKER_BALANZ,
   CC_BROKER_INVIU,
+  esBrokerInviu,
 } from "./cc-engine.js";
+import { normalizarTickerActivoInviu } from "./cc-ticker-inviu.js";
 import {
   fechaIsoLocal,
   aplicarMonedaInformeAMovimientos,
@@ -211,8 +213,12 @@ function leerTenenciasManuales() {
     if (pu == null || pu < 0) {
       throw new Error(`Tenencia inicial fila ${n}: precio unitario inválido (≥ 0).`);
     }
+    let tNorm = normalizarTextoComparacion(ticker);
+    if (esBrokerInviu(leerCcBrokerDesdeUi()) && tNorm) {
+      tNorm = normalizarTickerActivoInviu(tNorm);
+    }
     lotes.push({
-      ticker: normalizarTextoComparacion(ticker),
+      ticker: tNorm,
       cantidad: cant,
       precioUnitario: pu,
       totalCost: cant * pu,
@@ -340,10 +346,18 @@ function etiquetaTipoActivoInferido(d) {
   return String(t);
 }
 
+/** Inviu: mismo activo con códigos distintos; la columna muestra PEPS + código del archivo si difiere. */
+function etiquetaTickerDetalleExcel(d) {
+  const c = d.ticker || "";
+  const a = d.tickerArchivo;
+  if (a && c && String(a) !== String(c)) return `${c} (${a})`;
+  return c || "—";
+}
+
 function filaDetalleMovimientoExcel(d) {
   return [
     fmtFecha(d.fechaConc),
-    d.ticker || "—",
+    etiquetaTickerDetalleExcel(d),
     d.operacionBroker || "—",
     etiquetaTipoActivoInferido(d),
     d.descripcion,
@@ -668,7 +682,7 @@ function exportarExcelCC(resultado) {
 
   const cabDet = [
     "Fecha concertación",
-    "Ticker",
+    "Ticker (PEPS; archivo si difiere)",
     "Operación (archivo)",
     "Tipo de activo (inferido)",
     "Descripción",
@@ -682,7 +696,7 @@ function exportarExcelCC(resultado) {
   ];
   const cabDetPeps = [
     "Fecha concertación",
-    "Ticker",
+    "Ticker (PEPS; archivo si difiere)",
     "Operación (archivo)",
     "Tipo de activo (inferido)",
     "Descripción",
@@ -1033,7 +1047,8 @@ $("fileTenenciasCC").addEventListener("change", async (ev) => {
     const buf = await file.arrayBuffer();
     const filas = leerExcelHojaTenencias(buf);
     const lotes = parsearTenenciasInicialesExcel(
-      filas.map((r) => ({ A: r.A, B: r.B, C: r.C }))
+      filas.map((r) => ({ A: r.A, B: r.B, C: r.C })),
+      leerCcBrokerDesdeUi()
     );
     const c = $("ccTenenciasContainer");
     c.innerHTML = "";

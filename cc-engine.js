@@ -4,6 +4,7 @@
  */
 
 import { inferirTipoActivoArgentinorSync } from "./cc-instrumentos-arg.js";
+import { normalizarTickerActivoInviu } from "./cc-ticker-inviu.js";
 
 /** Extractos formato Balanz (columnas A–I fijas, fila 1 títulos). */
 export const CC_BROKER_BALANZ = "BALANZ";
@@ -208,8 +209,13 @@ export function esTipoCorporativos(tipoInstrumento) {
 
 /**
  * Excel tenencias: fila 1 títulos. A=Ticker, B=Cantidad, C=Precio unitario (costo PEPS).
+ * Con broker Inviu, el ticker se normaliza al mismo activo PEPS que en movimientos (p. ej. GGALD→GGAL).
  */
-export function parsearTenenciasInicialesExcel(filas) {
+export function parsearTenenciasInicialesExcel(
+  filas,
+  broker = CC_BROKER_BALANZ
+) {
+  const inviu = esBrokerInviu(broker);
   const lotes = [];
   for (let r = 0; r < filas.length; r++) {
     const row = filas[r];
@@ -227,8 +233,10 @@ export function parsearTenenciasInicialesExcel(filas) {
     if (pu == null || pu < 0) {
       throw new Error(`Tenencias fila ${r + 2}: precio unitario inválido (columna C).`);
     }
+    let tNorm = normalizarTextoComparacion(tick);
+    if (inviu && tNorm) tNorm = normalizarTickerActivoInviu(tNorm);
     lotes.push({
-      ticker: normalizarTextoComparacion(tick),
+      ticker: tNorm,
       cantidad: cantAbs,
       precioUnitario: pu,
       totalCost: cantAbs * pu,
@@ -432,7 +440,11 @@ export function parsearMovimientosExcel(
         tickerExtraidoDesdeDesc = true;
       }
     }
-    const ticker = tickerCol ? normalizarTextoComparacion(tickerCol) : "";
+    const tickerArchivo = tickerCol ? normalizarTextoComparacion(tickerCol) : "";
+    const ticker =
+      inviu && tickerArchivo
+        ? normalizarTickerActivoInviu(tickerArchivo)
+        : tickerArchivo;
     const tipoInstrumento = String(leerCeldaMovimiento(row, mapa.tipoInstrumento) ?? "").trim();
     const cantidad = parseNumAR(leerCeldaMovimiento(row, mapa.cantidad));
     const precio = parseNumAR(leerCeldaMovimiento(row, mapa.precio));
@@ -471,6 +483,7 @@ export function parsearMovimientosExcel(
       fechaConc,
       descripcion,
       ticker,
+      tickerArchivo: inviu ? tickerArchivo : "",
       tipoInstrumento,
       cantidad,
       precio,
@@ -530,7 +543,11 @@ export function interpretarFilaMovimientoExcel(
       tickerExtraidoDesdeDesc = true;
     }
   }
-  const ticker = tickerCol ? normalizarTextoComparacion(tickerCol) : "";
+  const tickerArchivo = tickerCol ? normalizarTextoComparacion(tickerCol) : "";
+  const ticker =
+    inviu && tickerArchivo
+      ? normalizarTickerActivoInviu(tickerArchivo)
+      : tickerArchivo;
   const tipoInstrumento = String(leerCeldaMovimiento(row, mapa.tipoInstrumento) ?? "").trim();
   const cantidad = parseNumAR(leerCeldaMovimiento(row, mapa.cantidad));
   const precio = parseNumAR(leerCeldaMovimiento(row, mapa.precio));
@@ -567,6 +584,7 @@ export function interpretarFilaMovimientoExcel(
     fechaConc,
     descripcion,
     ticker,
+    tickerArchivo: inviu ? tickerArchivo : "",
     tipoInstrumento,
     cantidad,
     precio,
@@ -641,6 +659,7 @@ function priorizarOperacionCajaSobreTicker(m) {
     return {
       ...m,
       ticker: "",
+      tickerArchivo: "",
       tickerExtraidoDesdeDescripcion: false,
     };
   }
