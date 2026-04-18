@@ -721,6 +721,7 @@ function exportarExcelCC(resultado) {
 
   const cabPend = [
     "Ticker",
+    "Nombre del activo",
     "Fecha concertación origen",
     "Cantidad restante",
     "Valor unitario (PEPS)",
@@ -729,6 +730,9 @@ function exportarExcelCC(resultado) {
   ];
   const filasPend = (resultado.lotesPendientes || []).map((p) => [
     p.ticker,
+    p.nombreActivo != null && String(p.nombreActivo).trim() !== ""
+      ? p.nombreActivo
+      : "—",
     fmtFecha(p.fechaConcOrigen),
     p.cantidad,
     p.valorUnitario,

@@ -11,12 +11,15 @@
  * (BYMA/MAE: misma ON, distinto tramo/moneda según emisión).
  *
  * **CEDEARs:** mismo subyacente en pesos o dólar (p. ej. TSLA vs TSLAD): el sufijo **D** / **C** se
- * quita para PEPS; la inferencia de tipo usa el ticker canónico (p. ej. TSLA).
+ * quita para PEPS salvo que el símbolo ya sea el tronco BYMA completo (`TICKERS_TRONCO_EXACTO_INVUI`):
+ * p. ej. **KO** (Coca-Cola) no se reduce a **K**; **MCD** no se corta a **MC**.
  *
  * **Bonos/ON con códigos distintos por moneda:** a veces no basta quitar **D** (p. ej. en pesos el
  * código es otro). Caso BYMA/Inviu: **BPJ5D** (dólar) y **BPJ25** (pesos) → mismo activo **BPJ5**
  * para PEPS (mapa explícito tras las reglas de sufijo). Análogo: **BPY6D** / **BPY26** → **BPY6**.
  */
+
+import { TICKERS_TRONCO_EXACTO_INVUI } from "./cc-instrumentos-arg.js";
 
 /** Misma emisión cuando el símbolo en pesos no es solo «tronco sin D». */
 const INVUI_EQUIVALENCIA_TRAMO_EXPLICITO = new Map([
@@ -39,6 +42,7 @@ function normSym(s) {
 export function normalizarTickerActivoInviu(raw) {
   let t = normSym(raw);
   if (!t) return t;
+  if (TICKERS_TRONCO_EXACTO_INVUI.has(t)) return t;
 
   /** Quita un sufijo de 1 letra si hay al menos 2 caracteres (tronco ≥1). Ej.: BD→B, AAPLD→AAPL. */
   const stripFinal = (suf) => {
@@ -61,6 +65,8 @@ export function normalizarTickerActivoInviu(raw) {
 
   const equiv = INVUI_EQUIVALENCIA_TRAMO_EXPLICITO.get(t);
   if (equiv) t = equiv;
+
+  if (TICKERS_TRONCO_EXACTO_INVUI.has(t)) return t;
 
   return t;
 }

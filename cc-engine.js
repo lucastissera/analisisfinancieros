@@ -3,7 +3,10 @@
  * más agregados de caja por descripción (sin ticker).
  */
 
-import { inferirTipoActivoArgentinorSync } from "./cc-instrumentos-arg.js";
+import {
+  inferirTipoActivoArgentinorSync,
+  denominacionActivoPorTickerByma,
+} from "./cc-instrumentos-arg.js";
 import { normalizarTickerActivoInviu } from "./cc-ticker-inviu.js";
 
 /** Extractos formato Balanz (columnas A–I fijas, fila 1 títulos). */
@@ -1262,6 +1265,30 @@ export function prepararMovimientosIntercaladosCedears(movimientos) {
   return resultado;
 }
 
+function construirMapaNombreActivoPorTickerDesdeMovs(movs) {
+  const m = new Map();
+  const sorted = [...movs].sort((a, b) => {
+    const tf = a.fechaConc - b.fechaConc;
+    if (tf !== 0) return tf;
+    return (a.filaExcel ?? 0) - (b.filaExcel ?? 0);
+  });
+  for (const row of sorted) {
+    const tt = normalizarTextoComparacion(row.ticker || "");
+    const n = row.nombreActivoInviu;
+    if (!tt || !n || !String(n).trim()) continue;
+    m.set(tt, String(n).trim());
+  }
+  return m;
+}
+
+function nombreActivoParaLoteTenencia(ticker, mapaDesdeMovs) {
+  const t = normalizarTextoComparacion(ticker || "");
+  if (!t) return "";
+  const desdeInviu = mapaDesdeMovs.get(t);
+  if (desdeInviu) return desdeInviu;
+  return denominacionActivoPorTickerByma(ticker);
+}
+
 /**
  * @param {Array<{ ticker: string, cantidad: number, precioUnitario: number, totalCost: number }>} tenenciasLotes orden PEPS (primero = más antiguo)
  * @param {Array} movimientos parseados
@@ -1270,6 +1297,7 @@ export function procesarCuentaComitente(tenenciasLotes, movimientos) {
   const { movimientos: movs, gastosOperacionBroker } =
     consolidarMovimientosAccionesMismoCodigoOperacion(movimientos);
   movimientos = prepararMovimientosIntercaladosCedears(movs);
+  const nombrePorTickerMovs = construirMapaNombreActivoPorTickerDesdeMovs(movimientos);
   /** ticker -> cola de lotes { qty, totalCost } */
   const porTicker = new Map();
 
@@ -1454,6 +1482,7 @@ export function procesarCuentaComitente(tenenciasLotes, movimientos) {
       const vu = lot.qty > 1e-12 ? lot.totalCost / lot.qty : 0;
       lotesPendientes.push({
         ticker,
+        nombreActivo: nombreActivoParaLoteTenencia(ticker, nombrePorTickerMovs),
         cantidad: lot.qty,
         valorUnitario: vu,
         costoRemanente: lot.totalCost,
