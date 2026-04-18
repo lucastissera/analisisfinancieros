@@ -13,8 +13,15 @@
  * **CEDEARs:** mismo subyacente en pesos o dólar (p. ej. TSLA vs TSLAD): el sufijo **D** / **C** se
  * quita para PEPS; la inferencia de tipo usa el ticker canónico (p. ej. TSLA).
  *
- * **Bonos/ON con código alfanumérico + D:** p. ej. **BPJ5D** → **BPJ5** (misma emisión, otro tramo).
+ * **Bonos/ON con códigos distintos por moneda:** a veces no basta quitar **D** (p. ej. en pesos el
+ * código es otro). Caso BYMA/Inviu: **BPJ5D** (dólar) y **BPJ25** (pesos) → mismo activo **BPJ5**
+ * para PEPS (mapa explícito tras las reglas de sufijo).
  */
+
+/** Misma emisión cuando el símbolo en pesos no es solo «tronco sin D». */
+const INVUI_EQUIVALENCIA_TRAMO_EXPLICITO = new Map([
+  ["BPJ25", "BPJ5"],
+]);
 
 function normSym(s) {
   return String(s ?? "")
@@ -50,6 +57,9 @@ export function normalizarTickerActivoInviu(raw) {
   if (t.endsWith("P") && t.length >= 2 && tieneDigito()) {
     t = t.slice(0, -1);
   }
+
+  const equiv = INVUI_EQUIVALENCIA_TRAMO_EXPLICITO.get(t);
+  if (equiv) t = equiv;
 
   return t;
 }
