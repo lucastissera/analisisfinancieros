@@ -147,7 +147,7 @@ function mensajeImportarMovsPendiente() {
   if (b === CC_BROKER_INVIU) {
     return (
       base +
-      "Inviu: además columna «Operación», ticker en descripción «TICKER | …» si aplica, e inferencia de tipo de activo."
+      "Inviu: columna «Operación»; en «Descripción» suele ir «TICKER | nombre del activo — …» (CEDEAR: mismo subyacente p. ej. TSLA/TSLAD); se infiere tipo y, si la columna tipo dice CEDEAR, se refuerza la clasificación."
     );
   }
   return base + "Balanz: sin las reglas extra de Inviu (Operación, ticker en descripción, etc.).";
@@ -354,10 +354,17 @@ function etiquetaTickerDetalleExcel(d) {
   return c || "—";
 }
 
+/** Nombre del activo parseado de «TICKER | Nombre — …» (solo Inviu). */
+function etiquetaNombreActivoInviu(d) {
+  const n = d.nombreActivoInviu;
+  return n && String(n).trim() !== "" ? n : "—";
+}
+
 function filaDetalleMovimientoExcel(d) {
   return [
     fmtFecha(d.fechaConc),
     etiquetaTickerDetalleExcel(d),
+    etiquetaNombreActivoInviu(d),
     d.operacionBroker || "—",
     etiquetaTipoActivoInferido(d),
     d.descripcion,
@@ -400,7 +407,7 @@ function importeOrigenPepsParaExcel(d) {
 
 function filaDetalleMovimientoExcelHojaPeps(d) {
   const row = filaDetalleMovimientoExcel(d);
-  row[8] = importeOrigenPepsParaExcel(d);
+  row[9] = importeOrigenPepsParaExcel(d);
   return row;
 }
 
@@ -683,6 +690,7 @@ function exportarExcelCC(resultado) {
   const cabDet = [
     "Fecha concertación",
     "Ticker (PEPS; archivo si difiere)",
+    "Nombre activo (Inviu, desde Descripción)",
     "Operación (archivo)",
     "Tipo de activo (inferido)",
     "Descripción",
@@ -697,6 +705,7 @@ function exportarExcelCC(resultado) {
   const cabDetPeps = [
     "Fecha concertación",
     "Ticker (PEPS; archivo si difiere)",
+    "Nombre activo (Inviu, desde Descripción)",
     "Operación (archivo)",
     "Tipo de activo (inferido)",
     "Descripción",

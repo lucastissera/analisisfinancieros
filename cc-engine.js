@@ -98,17 +98,60 @@ export function normalizarTextoComparacion(s) {
 const INVUI_PREFIJOS_CAUCION_NO_TICKER = new Set(["CC", "CT"]);
 
 /**
- * Brokers tipo Inviu: ticker al inicio de la descripción antes de " | " (espacio-pipe-espacio).
- * Ej.: "AAPL | Apple Inc — …"
- * No interpreta como ticker los prefijos reservados CC/CT (caución colocadora / tomadora en Inviu).
+ * Inviu: descripción suele ser «TICKER | Nombre del activo — detalle…» (pipe con o sin espacios).
+ * Devuelve ticker normalizado y texto tras el primer pipe, o null si no aplica / es CC| / CT|.
  */
-export function extraerTickerPrefijoDescripcionInviu(descripcion) {
+function parseInviuPrefijoTickerYResto(descripcion) {
   const raw = String(descripcion ?? "").trim();
-  const m = raw.match(/^([A-Za-z][A-Za-z0-9.]{0,15})\s+\|\s+/);
+  const m = raw.match(/^([A-Za-z][A-Za-z0-9.]{0,15})\s*\|\s*([\s\S]+)$/);
   if (!m) return null;
   const candidato = normalizarTextoComparacion(m[1]);
   if (INVUI_PREFIJOS_CAUCION_NO_TICKER.has(candidato)) return null;
-  return candidato;
+  return { ticker: candidato, resto: m[2].trim() };
+}
+
+/**
+ * Brokers tipo Inviu: ticker al inicio de la descripción antes del primer "|".
+ * Ej.: "AAPL | Apple Inc — …", "TSLAD|Tesla — …"
+ * No interpreta como ticker los prefijos reservados CC/CT (caución colocadora / tomadora en Inviu).
+ */
+export function extraerTickerPrefijoDescripcionInviu(descripcion) {
+  const p = parseInviuPrefijoTickerYResto(descripcion);
+  return p ? p.ticker : null;
+}
+
+/**
+ * Texto descriptivo del activo (tras el ticker y el pipe), antes de guiones largos o " - " de detalle.
+ * @returns {string|null}
+ */
+export function extraerNombreActivoDesdeDescripcionInviu(descripcion) {
+  const p = parseInviuPrefijoTickerYResto(descripcion);
+  if (!p || !p.resto) return null;
+  let rest = p.resto;
+  const porRaya = rest.split(/\s+[—–]\s+/);
+  if (porRaya.length > 1) {
+    const n = porRaya[0].trim();
+    return n || null;
+  }
+  const porGuion = rest.split(/\s+-\s+/);
+  if (porGuion.length > 1) {
+    const n = porGuion[0].trim();
+    return n || null;
+  }
+  return rest.trim() || null;
+}
+
+/**
+ * Inviu: columna «Tipo de instrumento» con CEDEAR refuerza la clasificación cuando el ticker
+ * canónico (p. ej. TSLA desde TSLAD) queda como heurística genérica u «otro».
+ */
+function complementarTipoActivoInviuConColumna(tipoAct, ticker, tipoInstrumentoCol) {
+  if (!ticker || !tipoAct) return tipoAct;
+  const ti = normalizarTextoComparacion(String(tipoInstrumentoCol ?? ""));
+  if (!ti.includes("CEDEAR")) return tipoAct;
+  if (["bono_ons", "letra", "fci", "accion_ar"].includes(tipoAct.tipo)) return tipoAct;
+  if (tipoAct.tipo === "cedear") return tipoAct;
+  return { tipo: "cedear", fuente: "columna_tipo_Inviu" };
 }
 
 function clasificarIngresoDesdeOperacionBroker(operacionBroker) {
@@ -459,10 +502,13 @@ export function parsearMovimientosExcel(
     const moneda = leerCeldaMovimiento(row, mapa.moneda);
     const importe = parseNumAR(leerCeldaMovimiento(row, mapa.importe));
 
-    const tipoAct =
+    let tipoAct =
       inviu && ticker
         ? inferirTipoActivoArgentinorSync(ticker)
         : { tipo: null, fuente: "—" };
+    if (inviu && ticker) {
+      tipoAct = complementarTipoActivoInviuConColumna(tipoAct, ticker, tipoInstrumento);
+    }
 
     const cantidadCero =
       cantidad == null || Math.abs(Number(cantidad) || 0) < 1e-9;
@@ -484,6 +530,9 @@ export function parsearMovimientosExcel(
       descripcion,
       ticker,
       tickerArchivo: inviu ? tickerArchivo : "",
+      nombreActivoInviu: inviu
+        ? extraerNombreActivoDesdeDescripcionInviu(descripcion) || ""
+        : "",
       tipoInstrumento,
       cantidad,
       precio,
@@ -562,10 +611,13 @@ export function interpretarFilaMovimientoExcel(
   const moneda = leerCeldaMovimiento(row, mapa.moneda);
   const importe = parseNumAR(leerCeldaMovimiento(row, mapa.importe));
 
-  const tipoAct =
+  let tipoAct =
     inviu && ticker
       ? inferirTipoActivoArgentinorSync(ticker)
       : { tipo: null, fuente: "—" };
+  if (inviu && ticker) {
+    tipoAct = complementarTipoActivoInviuConColumna(tipoAct, ticker, tipoInstrumento);
+  }
 
   const cantidadCero =
     cantidad == null || Math.abs(Number(cantidad) || 0) < 1e-9;
@@ -585,6 +637,9 @@ export function interpretarFilaMovimientoExcel(
     descripcion,
     ticker,
     tickerArchivo: inviu ? tickerArchivo : "",
+    nombreActivoInviu: inviu
+      ? extraerNombreActivoDesdeDescripcionInviu(descripcion) || ""
+      : "",
     tipoInstrumento,
     cantidad,
     precio,
@@ -660,6 +715,7 @@ function priorizarOperacionCajaSobreTicker(m) {
       ...m,
       ticker: "",
       tickerArchivo: "",
+      nombreActivoInviu: "",
       tickerExtraidoDesdeDescripcion: false,
     };
   }

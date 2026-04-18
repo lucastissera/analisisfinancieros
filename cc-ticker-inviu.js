@@ -9,6 +9,9 @@
  * **P (pesos u otro tramo en ON):** solo si el símbolo contiene al menos un dígito, para no
  * confundir con acciones que terminan en P (p. ej. PAMP). Ej.: YCA6P e YCA6O → mismo activo YCA6
  * (BYMA/MAE: misma ON, distinto tramo/moneda según emisión).
+ *
+ * **CEDEARs:** mismo subyacente en pesos o dólar (p. ej. TSLA vs TSLAD): el sufijo **D** / **C** se
+ * quita para PEPS; la inferencia de tipo usa el ticker canónico (p. ej. TSLA).
  */
 
 function normSym(s) {
