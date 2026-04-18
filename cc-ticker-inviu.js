@@ -15,12 +15,13 @@
  *
  * **Bonos/ON con códigos distintos por moneda:** a veces no basta quitar **D** (p. ej. en pesos el
  * código es otro). Caso BYMA/Inviu: **BPJ5D** (dólar) y **BPJ25** (pesos) → mismo activo **BPJ5**
- * para PEPS (mapa explícito tras las reglas de sufijo).
+ * para PEPS (mapa explícito tras las reglas de sufijo). Análogo: **BPY6D** / **BPY26** → **BPY6**.
  */
 
 /** Misma emisión cuando el símbolo en pesos no es solo «tronco sin D». */
 const INVUI_EQUIVALENCIA_TRAMO_EXPLICITO = new Map([
   ["BPJ25", "BPJ5"],
+  ["BPY26", "BPY6"],
 ]);
 
 function normSym(s) {

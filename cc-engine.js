@@ -446,6 +446,81 @@ export function detectarMapaColumnasMovimientos(cabecerasRaw) {
 }
 
 /**
+ * Inviu: entre operaciones de compra/venta con cantidad ≠ 0, si el nombre del activo (texto tras «|»)
+ * coincide al comparar normalizado pero el ticker canónico difiere, es el mismo activo → un solo ticker
+ * PEPS (el primero en orden fecha + fila). Se aplica a todas las filas que lleven esos tickers.
+ */
+function unificarTickersInviuMismoNombreDescripcion(ops) {
+  if (!ops.length || !esBrokerInviu(ops[0].broker ?? CC_BROKER_BALANZ)) return ops;
+
+  const normNombre = (s) =>
+    normalizarTextoComparacion(String(s ?? "").replace(/\s+/g, " ").trim());
+
+  const candidatoParaDetectarFusion = (m) => {
+    if (!m.ticker) return false;
+    const c = m.cantidad;
+    if (c == null || Math.abs(Number(c) || 0) < 1e-9) return false;
+    const nom = m.nombreActivoInviu;
+    if (!nom || !String(nom).trim()) return false;
+    const o = normalizarTextoComparacion(String(m.operacionBroker || ""));
+    const solo = clasificarFlujoCajaSoloOperacion(o);
+    if (solo === "ingresos_cuenta" || solo === "salidas_cuenta") return false;
+    return true;
+  };
+
+  const sorted = [...ops].sort((a, b) => {
+    const t = a.fechaConc - b.fechaConc;
+    if (t !== 0) return t;
+    return (a.filaExcel ?? 0) - (b.filaExcel ?? 0);
+  });
+
+  /** @type {Map<string, Map<string, number>>} */
+  const porNombre = new Map();
+
+  for (const m of sorted) {
+    if (!candidatoParaDetectarFusion(m)) continue;
+    const nKey = normNombre(m.nombreActivoInviu);
+    if (!nKey) continue;
+    const tick = m.ticker;
+    if (!porNombre.has(nKey)) porNombre.set(nKey, new Map());
+    const orden = porNombre.get(nKey);
+    if (!orden.has(tick)) orden.set(tick, orden.size);
+  }
+
+  /** @type {Map<string, string>} */
+  const remap = new Map();
+  for (const [, orden] of porNombre) {
+    if (orden.size < 2) continue;
+    const ordered = [...orden.entries()].sort((a, b) => a[1] - b[1]);
+    const canonical = ordered[0][0];
+    for (const [tick] of ordered) {
+      remap.set(tick, canonical);
+    }
+  }
+
+  if (remap.size === 0) return ops;
+
+  return ops.map((m) => {
+    const t = m.ticker;
+    if (!t) return m;
+    const canon = remap.get(t);
+    if (!canon || canon === t) return m;
+    const tipoAct = inferirTipoActivoArgentinorSync(canon);
+    const tipoFin = complementarTipoActivoInviuConColumna(
+      tipoAct,
+      canon,
+      m.tipoInstrumento
+    );
+    return {
+      ...m,
+      ticker: canon,
+      tipoActivoInferido: tipoFin.tipo,
+      tipoActivoFuente: tipoFin.fuente,
+    };
+  });
+}
+
+/**
  * Movimientos: filas de datos + mapa de columnas (MAPA_LEGACY_MOVIMIENTOS = orden A–I antiguo).
  * @param {string} [broker=CC_BROKER_BALANZ] CC_BROKER_INVIU activa columnas flexibles, Operación, ticker en descripción e inferencia de tipo de activo.
  */
@@ -553,7 +628,7 @@ export function parsearMovimientosExcel(
     if (t !== 0) return t;
     return (a.filaExcel ?? 0) - (b.filaExcel ?? 0);
   });
-  return ops;
+  return inviu ? unificarTickersInviuMismoNombreDescripcion(ops) : ops;
 }
 
 /**
