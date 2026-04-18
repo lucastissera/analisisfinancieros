@@ -30,14 +30,43 @@ function parseNumAR(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * Serial de Excel → instante en UTC medianoche de ese día civil. En zonas UTC−x,
+ * `new Date(ms)` hace que getDate() local sea el día anterior; se corrige al calendario deseado.
+ */
+function excelUtcMedianocheACalendarioLocal(d) {
+  return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+}
+
 function excelDateToDate(v) {
-  if (v instanceof Date && !Number.isNaN(v.getTime())) return v;
+  if (v instanceof Date && !Number.isNaN(v.getTime())) {
+    const d = v;
+    if (
+      d.getUTCHours() === 0 &&
+      d.getUTCMinutes() === 0 &&
+      d.getUTCSeconds() === 0 &&
+      d.getUTCMilliseconds() === 0
+    ) {
+      return excelUtcMedianocheACalendarioLocal(d);
+    }
+    return d;
+  }
   if (typeof v === "number" && v > 20000 && v < 60000) {
-    const utc = Math.round((v - 25569) * 86400 * 1000);
-    return new Date(utc);
+    const diaEntero = Math.floor(v);
+    const utc = Math.round((diaEntero - 25569) * 86400 * 1000);
+    return excelUtcMedianocheACalendarioLocal(new Date(utc));
   }
   const s = String(v).trim();
   if (s === "") return null;
+  const isoYmd = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})(?:[T\s].*)?$/);
+  if (isoYmd) {
+    const y = parseInt(isoYmd[1], 10);
+    const mo = parseInt(isoYmd[2], 10);
+    const d = parseInt(isoYmd[3], 10);
+    if (y >= 1900 && y <= 2100 && mo >= 1 && mo <= 12 && d >= 1 && d <= 31) {
+      return new Date(y, mo - 1, d);
+    }
+  }
   const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
   if (m) {
     let d = parseInt(m[1], 10);
