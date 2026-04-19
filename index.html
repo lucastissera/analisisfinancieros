@@ -119,10 +119,12 @@
           <h2>Movimientos del período</h2>
           <p class="hint">
             Elegí el <strong>broker del extracto</strong> antes de la moneda del informe.
-            Para <strong>Balanz</strong> e <strong>Inviu</strong> la primera fila define columnas por nombre
+            Para <strong>Balanz</strong>, <strong>Inviu</strong> y <strong>PPI (Portfolio Personal)</strong> la primera fila define columnas por nombre
             (orden libre, con o sin tildes); si no se reconocen los encabezados obligatorios, se usa el formato fijo A–I.
             Solo <strong>Inviu</strong>: columna «Operación», ticker en descripción «TICKER | …» si no hay columna ticker,
-            reglas CC/CT para caución; el tipo de instrumento se deduce del texto en «Descripción» (nombre del activo y palabras clave) y del ticker como respaldo — el extracto no trae columna de tipo utilizable.
+            reglas CC/CT para caución.
+            Solo <strong>PPI</strong>: sin columna «Operación»; en «Descripción» figuran el ticker, COMPRA/VENTA, ingreso o retiro de fondos, renta, amortización, dividendo en efectivo y retenciones (incl. Ret. Bs.Ps / Ret Gcias).
+            <strong>Inviu</strong> y <strong>PPI</strong>: el tipo de instrumento se deduce del texto en «Descripción» y del ticker como respaldo (misma lógica de inferencia); el extracto suele no traer columna de tipo utilizable.
             Los CEDEARs y demás tickers pueden venir intercalados: se agrupa por
             ticker, se ordena por fecha (las filas con fechas anteriores van
             primero aunque estén más abajo en el archivo) y el mismo día las
@@ -146,6 +148,7 @@
               <select id="ccBrokerMovs">
                 <option value="BALANZ" selected>Balanz</option>
                 <option value="INVIU">Inviu</option>
+                <option value="PPI">Portfolio Personal Inversiones (PPI)</option>
               </select>
             </div>
             <div class="field cc-moneda-informe-field">

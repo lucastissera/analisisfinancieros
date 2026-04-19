@@ -10,7 +10,8 @@ import {
   MAPA_LEGACY_MOVIMIENTOS,
   CC_BROKER_BALANZ,
   CC_BROKER_INVIU,
-  esBrokerInviu,
+  CC_BROKER_PPI,
+  esBrokerInferenciaInviuOPpi,
 } from "./cc-engine.js";
 import { normalizarTickerActivoInviu } from "./cc-ticker-inviu.js";
 import {
@@ -31,7 +32,7 @@ import {
 const $ = (id) => document.getElementById(id);
 
 let ultimoResultadoCC = null;
-/** Broker usado en el último análisis CC (formato Excel Inviu). */
+/** Broker usado en el último análisis CC (formato del extracto importado). */
 let ultimoBrokerMovsCC = CC_BROKER_BALANZ;
 let ultimoNombreMovs = "movimientos.xlsx";
 /** @type {'ARS'|'USD'|'CV7000'|'ORIGEN'} */
@@ -129,7 +130,7 @@ function leerExcelHojaTenencias(data) {
 /**
  * Fila 1 = encabezados: se detectan columnas por nombre (orden libre, con o sin tildes).
  * Si no se encuentran las obligatorias, fallback orden A–I (comportamiento legacy).
- * La distinción Balanz / Inviu aplica en el parseo (cc-engine), no en la lectura del mapa.
+ * La distinción por broker (Balanz / Inviu / PPI) aplica en el parseo (cc-engine), no en la lectura del mapa.
  */
 function leerExcelMovimientosCC(data, broker = CC_BROKER_BALANZ) {
   const all = leerPrimeraHojaFilas2D(data);
@@ -165,6 +166,7 @@ function leerCcBrokerDesdeUi() {
   const el = $("ccBrokerMovs");
   const v = el?.value;
   if (v === CC_BROKER_INVIU) return CC_BROKER_INVIU;
+  if (v === CC_BROKER_PPI) return CC_BROKER_PPI;
   return CC_BROKER_BALANZ;
 }
 
@@ -177,6 +179,12 @@ function mensajeImportarMovsPendiente() {
     return (
       base +
       "Inviu: columna «Operación»; en «Descripción» suele ir «TICKER | nombre del activo — …» (CEDEAR: mismo subyacente p. ej. TSLA/TSLAD); se infiere tipo y, si la columna tipo dice CEDEAR, se refuerza la clasificación."
+    );
+  }
+  if (b === CC_BROKER_PPI) {
+    return (
+      base +
+      "PPI (Portfolio Personal): el ticker y el tipo de operación van en «Descripción» (COMPRA/VENTA, ingreso o retiro de fondos, renta, amortización, dividendo en efectivo, retenciones); sin columna «Operación». Misma inferencia de instrumento que Inviu (texto + ticker normalizado)."
     );
   }
   return base + "Balanz: sin las reglas extra de Inviu (Operación, ticker en descripción, etc.).";
@@ -243,7 +251,7 @@ function leerTenenciasManuales() {
       throw new Error(`Tenencia inicial fila ${n}: precio unitario inválido (≥ 0).`);
     }
     let tNorm = normalizarTextoComparacion(ticker);
-    if (esBrokerInviu(leerCcBrokerDesdeUi()) && tNorm) {
+    if (esBrokerInferenciaInviuOPpi(leerCcBrokerDesdeUi()) && tNorm) {
       tNorm = normalizarTickerActivoInviu(tNorm);
     }
     lotes.push({
@@ -407,20 +415,20 @@ function etiquetaTipoActivoInferido(d) {
 }
 
 /**
- * Inviu: la columna «Moneda original» distingue tramos; no mostrar código de archivo entre paréntesis.
- * Otros brokers: PEPS + código del archivo si difiere.
+ * Inviu / PPI: no mostrar código de archivo entre paréntesis (ticker ya normalizado para PEPS).
+ * Balanz: PEPS + código del archivo si difiere.
  */
 function etiquetaTickerDetalleExcel(d) {
   const c = d.ticker || "";
   const a = d.tickerArchivo;
-  if (esBrokerInviu(d.broker ?? CC_BROKER_BALANZ)) {
+  if (esBrokerInferenciaInviuOPpi(d.broker ?? CC_BROKER_BALANZ)) {
     return c || "—";
   }
   if (a && c && String(a) !== String(c)) return `${c} (${a})`;
   return c || "—";
 }
 
-/** Nombre del activo parseado de «TICKER | Nombre — …» (solo Inviu). */
+/** Nombre del activo desde descripción (Inviu: pipe; PPI: tras «TICKER - …»). */
 function etiquetaNombreActivoInviu(d) {
   const n = d.nombreActivoInviu;
   return n && String(n).trim() !== "" ? n : "—";
@@ -565,7 +573,7 @@ function esTipoInstrumentoBono(tipoInstrumento) {
 
 /**
  * Clase de instrumento para hojas PEPS (compra/venta).
- * Inviu: no hay columna de tipo; usa solo tipo inferido (descripción + ticker en cc-engine).
+ * Inviu / PPI: no hay columna de tipo fiable; usa tipo inferido (descripción + ticker en cc-engine).
  * @returns {'acciones'|'cedears'|'corporativos'|'bonos'|null}
  */
 /** ON corporativa (lista/patrón en cc-instrumentos-arg) vs resto de bono_ons (p. ej. soberanos AL/GD). */
@@ -577,7 +585,7 @@ function claseBonoInviuPorFuente(fuente) {
 
 function claseInstrumentoPeps(d) {
   if (!esOperacionPepsMovimiento(d)) return null;
-  if (esBrokerInviu(d.broker ?? CC_BROKER_BALANZ)) {
+  if (esBrokerInferenciaInviuOPpi(d.broker ?? CC_BROKER_BALANZ)) {
     let inf = d.tipoActivoInferido;
     let fuente = d.tipoActivoFuente;
     if (inf === "corporativos") return "corporativos";
@@ -773,8 +781,8 @@ function appendHojaAgrupadaClase(
 function exportarExcelCC(resultado) {
   const XLSX = window.XLSX;
   const cf = resultado.cashFlows;
-  const esInviu = esBrokerInviu(ultimoBrokerMovsCC);
-  const etiquetaColTickerDetalle = esInviu
+  const brokerFlexTicker = esBrokerInferenciaInviuOPpi(ultimoBrokerMovsCC);
+  const etiquetaColTickerDetalle = brokerFlexTicker
     ? "Ticker (PEPS)"
     : "Ticker (PEPS; archivo si difiere)";
 
@@ -833,7 +841,7 @@ function exportarExcelCC(resultado) {
   const cabDet = [
     "Fecha concertación",
     etiquetaColTickerDetalle,
-    "Nombre activo (Inviu, desde Descripción)",
+    "Nombre activo (desde Descripción)",
     "Operación (archivo)",
     "Tipo de activo (inferido)",
     "Descripción",
@@ -848,7 +856,7 @@ function exportarExcelCC(resultado) {
   const cabDetPeps = [
     "Fecha concertación",
     etiquetaColTickerDetalle,
-    "Nombre activo (Inviu, desde Descripción)",
+    "Nombre activo (desde Descripción)",
     "Operación (archivo)",
     "Tipo de activo (inferido)",
     "Descripción",
