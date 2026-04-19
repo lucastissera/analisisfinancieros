@@ -870,7 +870,10 @@ export function parsearMovimientosExcel(
         ? normalizarTickerActivoInviu(tickerArchivo)
         : tickerArchivo;
     const tipoInstrumento = String(leerCeldaMovimiento(row, mapa.tipoInstrumento) ?? "").trim();
-    const cantidad = parseNumAR(leerCeldaMovimiento(row, mapa.cantidad));
+    let cantidad = parseNumAR(leerCeldaMovimiento(row, mapa.cantidad));
+    if (ppi && cantidad != null && Number.isFinite(cantidad)) {
+      cantidad = Math.abs(cantidad);
+    }
     const precio = parseNumAR(leerCeldaMovimiento(row, mapa.precio));
     const fechaLiqRaw = leerCeldaMovimiento(row, mapa.fechaLiq);
     const fechaLiq =
@@ -986,7 +989,10 @@ export function interpretarFilaMovimientoExcel(
       ? normalizarTickerActivoInviu(tickerArchivo)
       : tickerArchivo;
   const tipoInstrumento = String(leerCeldaMovimiento(row, mapa.tipoInstrumento) ?? "").trim();
-  const cantidad = parseNumAR(leerCeldaMovimiento(row, mapa.cantidad));
+  let cantidad = parseNumAR(leerCeldaMovimiento(row, mapa.cantidad));
+  if (ppi && cantidad != null && Number.isFinite(cantidad)) {
+    cantidad = Math.abs(cantidad);
+  }
   const precio = parseNumAR(leerCeldaMovimiento(row, mapa.precio));
   const fechaLiqRaw = leerCeldaMovimiento(row, mapa.fechaLiq);
   const fechaLiq =
@@ -1430,11 +1436,26 @@ function esCompra(m) {
   const op = normalizarTextoComparacion(String(m.operacionBroker || ""));
   const br = m.broker ?? CC_BROKER_BALANZ;
   const d = normalizarTextoComparacion(String(m.descripcion || ""));
+  /*
+   * PPI: la magnitud es siempre |cantidad|; COMPRA/VENTA en descripción define si suma o resta al PEPS.
+   * Sin palabra clara, se usa el signo del importe (compra suele debitar, venta acreditar).
+   */
   if (esBrokerPpi(br)) {
     const hasV = /\bVENTA\b/.test(d);
     const hasC = /\bCOMPRA\b/.test(d);
     if (hasV && !hasC) return false;
     if (hasC && !hasV) return true;
+    if (hasV && hasC) {
+      const iC = d.search(/\bCOMPRA\b/);
+      const iV = d.search(/\bVENTA\b/);
+      if (iC >= 0 && iV >= 0) return iC <= iV;
+    }
+    const imp = m.importe;
+    if (imp != null && Number.isFinite(imp)) {
+      if (imp < 0) return true;
+      if (imp > 0) return false;
+    }
+    return true;
   }
   /* Inviu: operación que empieza con CC/CT = caución, no compra/venta de activo por esta vía. */
   if (
