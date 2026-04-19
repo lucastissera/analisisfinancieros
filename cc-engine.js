@@ -541,6 +541,24 @@ export const MAPA_LEGACY_MOVIMIENTOS = Object.freeze({
   operacion: -1,
 });
 
+/**
+ * PPI sin fila de títulos: columnas típicas A–E
+ * Fecha concertación | Descripción | Cantidad (nominales) | Precio | Importe
+ * (sin ticker / tipo / liq / moneda en columnas propias; el ticker sale de la descripción).
+ */
+export const MAPA_MOVIMIENTOS_PPI_5_COLUMNAS = Object.freeze({
+  fechaConc: 0,
+  descripcion: 1,
+  ticker: -1,
+  tipoInstrumento: -1,
+  cantidad: 2,
+  precio: 3,
+  fechaLiq: -1,
+  moneda: -1,
+  importe: 4,
+  operacion: -1,
+});
+
 function leerCeldaMovimiento(row, idx) {
   if (idx == null || idx < 0) return undefined;
   if (Array.isArray(row)) {
@@ -549,6 +567,47 @@ function leerCeldaMovimiento(row, idx) {
   const letters = ["A", "B", "C", "D", "E", "F", "G", "H", "I"];
   if (idx < 9 && row[letters[idx]] !== undefined) return row[letters[idx]];
   return row[idx];
+}
+
+/** Una sola celda que suele ser título de columna, no el texto de un movimiento. */
+const ENCABEZADO_SOLO_CELDA_DESCRIPCION = new Set([
+  "DESCRIPCION",
+  "DESCRIP",
+  "CONCEPTO",
+  "DETALLE",
+  "OPERACION",
+  "TICKER",
+  "CANTIDAD",
+  "PRECIO",
+  "IMPORTE",
+  "MONEDA",
+  "FECHA",
+]);
+
+/**
+ * La primera fila parece un movimiento (fecha válida + descripción útil), no encabezados.
+ * Varios extractos (p. ej. PPI) vienen sin fila de títulos: si falla la detección por nombre
+ * no debe descartarse esta fila al usar MAPA_LEGACY (slice(1)).
+ */
+export function primeraFilaPareceMovimientoSinEncabezados(
+  row,
+  mapa = MAPA_LEGACY_MOVIMIENTOS
+) {
+  const fechaRaw = leerCeldaMovimiento(row, mapa.fechaConc);
+  if (
+    fechaRaw === undefined ||
+    fechaRaw === null ||
+    String(fechaRaw).trim() === ""
+  ) {
+    return false;
+  }
+  const fechaConc = excelDateToDate(fechaRaw);
+  if (!fechaConc || Number.isNaN(fechaConc.getTime())) return false;
+  const descripcion = String(leerCeldaMovimiento(row, mapa.descripcion) ?? "").trim();
+  if (descripcion.length < 2) return false;
+  const d = normalizarTextoComparacion(descripcion);
+  if (ENCABEZADO_SOLO_CELDA_DESCRIPCION.has(d)) return false;
+  return true;
 }
 
 /**

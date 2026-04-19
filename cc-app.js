@@ -7,7 +7,9 @@ import {
   normalizarTextoComparacion,
   esTipoCorporativos,
   detectarMapaColumnasMovimientos,
+  primeraFilaPareceMovimientoSinEncabezados,
   MAPA_LEGACY_MOVIMIENTOS,
+  MAPA_MOVIMIENTOS_PPI_5_COLUMNAS,
   CC_BROKER_BALANZ,
   CC_BROKER_INVIU,
   CC_BROKER_PPI,
@@ -153,10 +155,24 @@ function leerExcelMovimientosCC(data, broker = CC_BROKER_BALANZ) {
       broker,
     };
   } catch {
+    const mapaLegacy = MAPA_LEGACY_MOVIMIENTOS;
+    const sinEncabezados = primeraFilaPareceMovimientoSinEncabezados(
+      all[0],
+      mapaLegacy
+    );
+    let mapa = mapaLegacy;
+    if (sinEncabezados && broker === CC_BROKER_PPI) {
+      const nc = all[0].length;
+      if (nc >= 5 && nc <= 6) {
+        mapa = MAPA_MOVIMIENTOS_PPI_5_COLUMNAS;
+      }
+    }
     return {
-      filasDatos,
-      mapa: MAPA_LEGACY_MOVIMIENTOS,
-      cabeceras,
+      filasDatos: sinEncabezados
+        ? all.map((row) => [...row])
+        : filasDatos,
+      mapa,
+      cabeceras: sinEncabezados ? [] : cabeceras,
       broker,
     };
   }

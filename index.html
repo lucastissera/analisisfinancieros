@@ -124,6 +124,7 @@
             Solo <strong>Inviu</strong>: columna «Operación», ticker en descripción «TICKER | …» si no hay columna ticker,
             reglas CC/CT para caución.
             Solo <strong>PPI</strong>: sin columna «Operación»; en «Descripción» figuran el ticker, COMPRA/VENTA, ingreso o retiro de fondos, renta, amortización, dividendo en efectivo y retenciones (incl. Ret. Bs.Ps / Ret Gcias).
+            Si el archivo viene <strong>solo con filas de movimientos</strong> (sin títulos en la primera fila) y 5 columnas típicas (fecha, descripción, cantidad, precio, importe), el sistema las alinea como extracto PPI corto.
             <strong>Inviu</strong> y <strong>PPI</strong>: el tipo de instrumento se deduce del texto en «Descripción» y del ticker como respaldo (misma lógica de inferencia); el extracto suele no traer columna de tipo utilizable.
             Los CEDEARs y demás tickers pueden venir intercalados: se agrupa por
             ticker, se ordena por fecha (las filas con fechas anteriores van
