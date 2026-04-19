@@ -412,6 +412,10 @@ export function clasificarIngresoTituloSinPeps(
   const desdeOp = clasificarIngresoDesdeOperacionBroker(operacionBroker);
   if (desdeOp) return desdeOp;
   const d = normalizarTextoComparacion(descripcion);
+  /* PPI: COMPRA/VENTA en descripción definen operación de títulos; no enviar a ingresos sin PEPS. */
+  if (esBrokerPpi(broker) && (/\bCOMPRA\b/.test(d) || /\bVENTA\b/.test(d))) {
+    return null;
+  }
   if (d.includes("DIVIDENDO EN EFECTIVO")) return "dividendo";
   /* Inviu / PPI: a veces el extracto dice solo «DIVIDENDO» o «… DIVIDENDO …» sin la frase fija de Balanz. */
   if ((esBrokerInviu(broker) || esBrokerPpi(broker)) && d.includes("DIVIDENDO"))
@@ -1509,6 +1513,13 @@ function prioridadOrdenPepsMismoTicker(m) {
     (cero || esBrokerInviu(br) || esBrokerPpi(br))
   ) {
     return 1;
+  }
+  /*
+   * Inviu / PPI: el signo de «Cantidad» puede no seguir «positivo=compra / negativo=venta»
+   * (p. ej. nominales en negativo en compras); «Operación» o COMPRA/VENTA en descripción mandan.
+   */
+  if (esBrokerInviu(br) || esBrokerPpi(br)) {
+    return esCompra(m) ? 0 : 2;
   }
   if (cant != null && cant > 0) return 0;
   if (cant != null && cant < 0) return 2;
