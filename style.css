@@ -79,6 +79,16 @@ body {
   font-size: 0.9rem;
 }
 
+.login-expirada {
+  margin-top: 0.75rem;
+  padding: 0.65rem 0.85rem;
+  background: rgba(61, 139, 253, 0.1);
+  border: 1px solid rgba(61, 139, 253, 0.35);
+  border-radius: 8px;
+  color: #b8d4ff;
+  font-size: 0.9rem;
+}
+
 main {
   max-width: 720px;
   margin: 0 auto;
