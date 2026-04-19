@@ -1130,16 +1130,41 @@ function aoaParaPdfBody(aoa) {
 
 function obtenerConstructorJsPDF() {
   const w = typeof window !== "undefined" ? window : globalThis;
-  if (w.jspdf && typeof w.jspdf.jsPDF === "function") return w.jspdf.jsPDF;
+  const j = w.jspdf;
+  if (j) {
+    if (typeof j.jsPDF === "function") return j.jsPDF;
+    if (typeof j.default === "function") return j.default;
+  }
   if (typeof w.jsPDF === "function") return w.jsPDF;
   return null;
 }
 
-function exportarPdfCC(resultado) {
+function cargarScriptSecuencial(url) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = url;
+    s.async = false;
+    s.onload = () => resolve();
+    s.onerror = () =>
+      reject(new Error(`No se pudo cargar el script: ${url}`));
+    document.head.appendChild(s);
+  });
+}
+
+/** Garantiza jsPDF + AutoTable si falló la carga inicial. */
+async function asegurarJsPDFCargado() {
+  if (obtenerConstructorJsPDF()) return;
+  const base = new URL("./vendor/", window.location.href);
+  await cargarScriptSecuencial(new URL("jspdf.umd.min.js", base).href);
+  await cargarScriptSecuencial(new URL("jspdf.plugin.autotable.min.js", base).href);
+}
+
+async function exportarPdfCC(resultado) {
+  await asegurarJsPDFCargado();
   const jsPDF = obtenerConstructorJsPDF();
   if (!jsPDF) {
     throw new Error(
-      "No se cargó la librería jsPDF. Revisá la conexión o que index.html incluya el script de jsPDF antes de cc-app.js."
+      "No se cargó la librería jsPDF. Verificá que existan vendor/jspdf.umd.min.js y vendor/jspdf.plugin.autotable.min.js junto a index.html."
     );
   }
   const { hojas, baseName } = construirHojasExportacionCC(resultado);
@@ -1480,10 +1505,10 @@ $("btnExportarCC").addEventListener("click", () => {
   }
 });
 
-$("btnExportarPdfCC").addEventListener("click", () => {
+$("btnExportarPdfCC").addEventListener("click", async () => {
   if (!ultimoResultadoCC) return;
   try {
-    exportarPdfCC(ultimoResultadoCC);
+    await exportarPdfCC(ultimoResultadoCC);
   } catch (e) {
     mostrarErrorCC(e.message || String(e));
   }

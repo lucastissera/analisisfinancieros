@@ -311,8 +311,9 @@
     </div>
 
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.4/dist/jspdf.plugin.autotable.min.js" crossorigin="anonymous"></script>
+    <!-- jsPDF + AutoTable locales (vendor/) para evitar fallos de CDN o CORS -->
+    <script src="./vendor/jspdf.umd.min.js"></script>
+    <script src="./vendor/jspdf.plugin.autotable.min.js"></script>
     <script type="module" src="./auth.js"></script>
     <script type="module" src="./app.js"></script>
     <script type="module" src="./cc-app.js"></script>
