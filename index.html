@@ -7,6 +7,47 @@
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
+    <div id="view-login" class="login-shell">
+      <section class="card login-card">
+        <h2>Iniciar sesión</h2>
+        <p class="hint login-hint">
+          Ingresá usuario y contraseña para acceder al análisis de FCI y cuenta
+          comitente.
+        </p>
+        <div class="field">
+          <label for="loginUsuario">Usuario</label>
+          <input
+            id="loginUsuario"
+            type="text"
+            name="usuario"
+            autocomplete="username"
+            spellcheck="false"
+          />
+        </div>
+        <div class="field">
+          <label for="loginClave">Contraseña</label>
+          <input
+            id="loginClave"
+            type="password"
+            name="clave"
+            autocomplete="current-password"
+          />
+        </div>
+        <div id="loginErr" class="login-err" hidden>
+          Usuario/Clave incorrectos, intente nuevamente
+        </div>
+        <div class="login-actions">
+          <button type="button" class="btn-primary" id="btnLogin" disabled>
+            Ingresar
+          </button>
+          <button type="button" class="btn-secondary" id="btnUsuarioNuevo">
+            Usuario nuevo
+          </button>
+        </div>
+      </section>
+    </div>
+
+    <div id="app-shell" hidden>
     <main>
       <div id="view-fci">
         <header class="app-header">
@@ -282,7 +323,10 @@
         </small>
       </p>
     </footer>
+    </div>
+
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <script type="module" src="./auth.js"></script>
     <script type="module" src="./app.js"></script>
     <script type="module" src="./cc-app.js"></script>
   </body>
