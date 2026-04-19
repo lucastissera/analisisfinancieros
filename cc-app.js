@@ -390,14 +390,14 @@ function etiquetaTipoActivoInferido(d) {
   return String(t);
 }
 
-/** Inviu: mismo activo con códigos distintos; la columna muestra PEPS + código del archivo si difiere (salvo export puntuales). */
-function etiquetaTickerDetalleExcel(d, opts = {}) {
+/**
+ * Inviu: la columna «Moneda original» distingue tramos; no mostrar código de archivo entre paréntesis.
+ * Otros brokers: PEPS + código del archivo si difiere.
+ */
+function etiquetaTickerDetalleExcel(d) {
   const c = d.ticker || "";
   const a = d.tickerArchivo;
-  if (
-    opts.inviuCompraSinParentesisTicker &&
-    esBrokerInviu(d.broker ?? CC_BROKER_BALANZ)
-  ) {
+  if (esBrokerInviu(d.broker ?? CC_BROKER_BALANZ)) {
     return c || "—";
   }
   if (a && c && String(a) !== String(c)) return `${c} (${a})`;
@@ -410,10 +410,10 @@ function etiquetaNombreActivoInviu(d) {
   return n && String(n).trim() !== "" ? n : "—";
 }
 
-function filaDetalleMovimientoExcel(d, opts = {}) {
+function filaDetalleMovimientoExcel(d) {
   return [
     fmtFecha(d.fechaConc),
-    etiquetaTickerDetalleExcel(d, opts),
+    etiquetaTickerDetalleExcel(d),
     etiquetaNombreActivoInviu(d),
     d.operacionBroker || "—",
     etiquetaTipoActivoInferido(d),
@@ -546,14 +546,23 @@ function esTipoInstrumentoBono(tipoInstrumento) {
  * Inviu: no hay columna de tipo; usa solo tipo inferido (descripción + ticker en cc-engine).
  * @returns {'acciones'|'cedears'|'corporativos'|'bonos'|null}
  */
+/** ON corporativa (lista/patrón en cc-instrumentos-arg) vs resto de bono_ons (p. ej. soberanos AL/GD). */
+function claseBonoInviuPorFuente(fuente) {
+  const f = String(fuente ?? "");
+  if (f === "lista_ON_BYMA" || f === "patron_ON_corporativa") return "corporativos";
+  return "bonos";
+}
+
 function claseInstrumentoPeps(d) {
   if (!esOperacionPepsMovimiento(d)) return null;
   if (esBrokerInviu(d.broker ?? CC_BROKER_BALANZ)) {
     let inf = d.tipoActivoInferido;
+    let fuente = d.tipoActivoFuente;
     if (inf === "corporativos") return "corporativos";
     if (inf === "accion_ar") return "acciones";
     if (inf === "cedear") return "cedears";
-    if (inf === "bono_ons" || inf === "letra") return "bonos";
+    if (inf === "bono_ons") return claseBonoInviuPorFuente(fuente);
+    if (inf === "letra") return "bonos";
     if (
       (inf === "accion_cedear_u_otro" ||
         inf == null ||
@@ -561,11 +570,14 @@ function claseInstrumentoPeps(d) {
         inf === "sin_ticker") &&
       d.ticker
     ) {
-      inf = inferirTipoActivoArgentinorSync(d.ticker).tipo;
+      const sync = inferirTipoActivoArgentinorSync(d.ticker);
+      inf = sync.tipo;
+      fuente = sync.fuente;
     }
     if (inf === "accion_ar") return "acciones";
     if (inf === "cedear") return "cedears";
-    if (inf === "bono_ons" || inf === "letra") return "bonos";
+    if (inf === "bono_ons") return claseBonoInviuPorFuente(fuente);
+    if (inf === "letra") return "bonos";
     return null;
   }
   const ti = d.tipoInstrumento;
@@ -741,6 +753,9 @@ function exportarExcelCC(resultado) {
   const XLSX = window.XLSX;
   const cf = resultado.cashFlows;
   const esInviu = esBrokerInviu(ultimoBrokerMovsCC);
+  const etiquetaColTickerDetalle = esInviu
+    ? "Ticker (PEPS)"
+    : "Ticker (PEPS; archivo si difiere)";
 
   const notaCotizacion =
     ultimoMonedaInforme === "ORIGEN"
@@ -793,7 +808,7 @@ function exportarExcelCC(resultado) {
 
   const cabDet = [
     "Fecha concertación",
-    "Ticker (PEPS; archivo si difiere)",
+    etiquetaColTickerDetalle,
     "Nombre activo (Inviu, desde Descripción)",
     "Operación (archivo)",
     "Tipo de activo (inferido)",
@@ -808,7 +823,7 @@ function exportarExcelCC(resultado) {
   ];
   const cabDetPeps = [
     "Fecha concertación",
-    "Ticker (PEPS; archivo si difiere)",
+    etiquetaColTickerDetalle,
     "Nombre activo (Inviu, desde Descripción)",
     "Operación (archivo)",
     "Tipo de activo (inferido)",
@@ -883,11 +898,7 @@ function exportarExcelCC(resultado) {
       ["Total importe (suma algebraica)", sumImp],
       [],
       cabDet,
-      ...rows.map((d) =>
-        filaDetalleMovimientoExcel(d, {
-          inviuCompraSinParentesisTicker: tipo === "compra",
-        })
-      ),
+      ...rows.map((d) => filaDetalleMovimientoExcel(d)),
     ];
     const nombreHoja = nombreHojaExcelUnico(label, nombresReservados);
     bookAppendAoa(wb, XLSX, aoaRubro, nombreHoja, esInviu);
