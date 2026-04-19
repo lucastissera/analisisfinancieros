@@ -558,6 +558,7 @@ function etiquetaRubroTipoLinea(tipoLinea) {
     pagado_caucion_tomadora: "Pagado caución tomadora",
     giro_descubierto: "Giro en descubierto",
     gasto_cuenta_conej: "Gastos de cuenta (Conej)",
+    garantia_caucion_isin: "Garantía caución (ISIN, no PEPS)",
     ingreso_dividendo: "Dividendos en efectivo (sin PEPS)",
     ingreso_renta: "Renta (sin PEPS)",
     ingreso_renta_y_amortizacion: "Renta y amortización",
@@ -728,7 +729,11 @@ function filaExcluidaDeHojaRubroPorTipo(d, tipoLineaKey) {
   if (tipoLineaKey === "ingresos_cuenta" || tipoLineaKey === "salidas_cuenta") {
     return true;
   }
-  if (tipoLineaKey === "giro_descubierto" || tipoLineaKey === "gasto_cuenta_conej") {
+  if (
+    tipoLineaKey === "giro_descubierto" ||
+    tipoLineaKey === "gasto_cuenta_conej" ||
+    tipoLineaKey === "garantia_caucion_isin"
+  ) {
     return true;
   }
   if (
@@ -758,6 +763,9 @@ function movimientosAgrupadosPorClase(detalle, clase) {
       break;
     case "giro_descubierto":
       rows = detalle.filter((d) => d.tipoLinea === "giro_descubierto");
+      break;
+    case "garantia_caucion_tomadora":
+      rows = detalle.filter((d) => d.tipoLinea === "garantia_caucion_isin");
       break;
     case "peps_acciones":
       rows = detalle.filter((d) => claseInstrumentoPeps(d) === "acciones");
@@ -878,6 +886,10 @@ function exportarExcelCC(resultado) {
     ["Salidas de Dinero en la Cuenta", fmtContabilidad(cf.salidas_cuenta, 2)],
     ["Giro en descubierto (intereses / ingreso-egreso fondos)", fmtContabilidad(cf.giro_descubierto ?? 0, 2)],
     ["Gastos de cuenta (Conej)", fmtContabilidad(cf.gastos_cuenta_conej ?? 0, 2)],
+    [
+      "Garantía caución — resguardo con ISIN (no PEPS)",
+      fmtContabilidad(cf.garantia_caucion_tomadora ?? 0, 2),
+    ],
     ["Cobrado Caución Colocadora", fmtContabilidad(cf.rescate_caucion_colocadora, 2)],
     ["Prestado Caución Colocadora", fmtContabilidad(cf.suscripcion_caucion_colocadora, 2)],
     ["Pedido Caución Tomadora", fmtContabilidad(cf.pedido_caucion_tomadora ?? 0, 2)],
@@ -1040,6 +1052,7 @@ function exportarExcelCC(resultado) {
   const hojasAgrupadas = [
     ["Caucion Colocadora", "caucion_colocadora", null],
     ["Caución Tomadora", "caucion_tomadora", null],
+    ["Garantía caución (ISIN)", "garantia_caucion_tomadora", null],
     ["Ingresos y egresos de dinero en cuenta", "caja_dinero", "Dinero en cuenta"],
     ["Giro en descubierto", "giro_descubierto", null],
     ["Acciones", "peps_acciones", null],
@@ -1214,6 +1227,10 @@ async function ejecutarAnalisisCC() {
   if (elGiro) elGiro.textContent = fmtContabilidad(cf.giro_descubierto ?? 0, 2);
   const elGastosConej = $("ccGastosCuentaConej");
   if (elGastosConej) elGastosConej.textContent = fmtContabilidad(cf.gastos_cuenta_conej ?? 0, 2);
+  const elGarantiaIsin = $("ccGarantiaCaucionIsin");
+  if (elGarantiaIsin) {
+    elGarantiaIsin.textContent = fmtContabilidad(cf.garantia_caucion_tomadora ?? 0, 2);
+  }
   $("ccApcolfut").textContent = fmtContabilidad(cf.rescate_caucion_colocadora, 2);
   $("ccApcolcon").textContent = fmtContabilidad(cf.suscripcion_caucion_colocadora, 2);
   $("ccAptomcon").textContent = fmtContabilidad(cf.pedido_caucion_tomadora ?? 0, 2);

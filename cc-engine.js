@@ -1782,6 +1782,28 @@ function preclasificarMovimientoConej(m) {
   ) {
     return { tipoLinea: "giro_descubierto", cashKey: "giro_descubierto", ...strip };
   }
+  /**
+   * Ingreso/Egreso garantía caución con ISIN: resguardo para caución tomadora, no operación PEPS.
+   */
+  if (
+    (op.includes("INGRESO") || op.includes("EGRESO")) &&
+    op.includes("GARANTIA") &&
+    op.includes("CAUCION") &&
+    tick
+  ) {
+    return {
+      tipoLinea: "garantia_caucion_isin",
+      cashKey: "garantia_caucion_tomadora",
+      ...strip,
+    };
+  }
+  if (op.includes("INGRESO") && op.includes("GARANTIA") && op.includes("CAUCION") && !tick) {
+    return {
+      tipoLinea: "garantia_caucion_isin",
+      cashKey: "garantia_caucion_tomadora",
+      ...strip,
+    };
+  }
   if (op.includes("EGRESO") && op.includes("GARANTIA") && op.includes("CAUCION")) {
     return { tipoLinea: "pagado_caucion_tomadora", cashKey: "pagado_caucion_tomadora", ...strip };
   }
@@ -1876,6 +1898,7 @@ export function procesarCuentaComitente(tenenciasLotes, movimientos) {
     concepto_a_definir: 0,
     giro_descubierto: 0,
     gastos_cuenta_conej: 0,
+    garantia_caucion_tomadora: 0,
   };
 
   const detalleMovs = [];
