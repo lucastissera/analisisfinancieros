@@ -797,7 +797,8 @@ export function parsearMovimientosExcel(
         tickerCol = ext;
         tickerExtraidoDesdeDesc = true;
       }
-    } else if (ppi && !tickerCol) {
+    } else if (ppi) {
+      /* PPI: la descripción es la fuente de verdad; una columna mal detectada (p. ej. cantidad como «ticker») rompía el PEPS. */
       const ext = extraerTickerDescripcionPpi(descripcion);
       if (ext) {
         tickerCol = ext;
@@ -913,7 +914,7 @@ export function interpretarFilaMovimientoExcel(
       tickerCol = ext;
       tickerExtraidoDesdeDesc = true;
     }
-  } else if (ppi && !tickerCol) {
+  } else if (ppi) {
     const ext = extraerTickerDescripcionPpi(descripcion);
     if (ext) {
       tickerCol = ext;
