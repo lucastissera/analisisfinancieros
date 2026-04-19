@@ -119,7 +119,7 @@
           <h2>Movimientos del período</h2>
           <p class="hint">
             Elegí el <strong>broker del extracto</strong> antes de la moneda del informe.
-            Para <strong>Balanz</strong>, <strong>Inviu</strong> y <strong>PPI (Portfolio Personal)</strong> la primera fila define columnas por nombre
+            Para <strong>Balanz</strong>, <strong>Inviu</strong>, <strong>PPI (Portfolio Personal)</strong> y <strong>Conej</strong> la primera fila define columnas por nombre
             (orden libre, con o sin tildes); si no se reconocen los encabezados obligatorios, se usa el formato fijo A–I.
             Solo <strong>Inviu</strong>: columna «Operación», ticker en descripción «TICKER | …» si no hay columna ticker,
             reglas CC/CT para caución.
@@ -150,6 +150,7 @@
                 <option value="BALANZ" selected>Balanz</option>
                 <option value="INVIU">Inviu</option>
                 <option value="PPI">Portfolio Personal Inversiones (PPI)</option>
+                <option value="CONEJ">Conej</option>
               </select>
             </div>
             <div class="field cc-moneda-informe-field">
@@ -191,6 +192,14 @@
             <div class="result-item wide">
               <div class="label">Salidas de Dinero en la Cuenta</div>
               <div class="valor" id="ccSalidas">—</div>
+            </div>
+            <div class="result-item wide">
+              <div class="label">Giro en descubierto (Conej)</div>
+              <div class="valor" id="ccGiroDesc">—</div>
+            </div>
+            <div class="result-item wide">
+              <div class="label">Gastos de cuenta (Conej)</div>
+              <div class="valor" id="ccGastosCuentaConej">—</div>
             </div>
             <div class="result-item">
               <div class="label">Cobrado Caución Colocadora</div>

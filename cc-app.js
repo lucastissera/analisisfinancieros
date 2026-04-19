@@ -13,9 +13,11 @@ import {
   CC_BROKER_BALANZ,
   CC_BROKER_INVIU,
   CC_BROKER_PPI,
-  esBrokerInferenciaInviuOPpi,
+  CC_BROKER_CONEJ,
+  esBrokerInferenciaTipoActivoFlex,
 } from "./cc-engine.js";
 import { normalizarTickerActivoInviu } from "./cc-ticker-inviu.js";
+import { resolverTickersDesdeIsinOpenFigi, pareceIsin12 } from "./cc-isin-openfigi.js";
 import {
   fechaIsoLocal,
   aplicarMonedaInformeAMovimientos,
@@ -79,6 +81,35 @@ function sheetDesdeAoaConEstilo(XLSX, aoa) {
 function bookAppendAoa(wb, XLSX, aoa, nombreHoja) {
   const ws = sheetDesdeAoaConEstilo(XLSX, aoa);
   XLSX.utils.book_append_sheet(wb, ws, nombreHoja);
+}
+
+/** ISIN en columna → ticker/nombre vía OpenFIGI (si falla la red, queda el ISIN como ticker). */
+async function enriquecerMovimientosConejIsin(movimientos) {
+  const isins = [
+    ...new Set(
+      movimientos
+        .map((m) => m.tickerArchivo || m.ticker)
+        .filter((x) => pareceIsin12(x))
+    ),
+  ];
+  if (isins.length === 0) return movimientos;
+  const map = await resolverTickersDesdeIsinOpenFigi(isins);
+  return movimientos.map((m) => {
+    const raw = m.tickerArchivo || m.ticker;
+    if (!pareceIsin12(raw)) return m;
+    const key = String(raw)
+      .trim()
+      .toUpperCase()
+      .replace(/\s/g, "");
+    const r = map.get(key);
+    if (!r || !r.ticker) return m;
+    const tNorm = normalizarTickerActivoInviu(r.ticker);
+    return {
+      ...m,
+      ticker: tNorm,
+      nombreActivoInviu: r.nombre || m.nombreActivoInviu || "",
+    };
+  });
 }
 
 function parseNumLocal(v) {
@@ -184,6 +215,7 @@ function leerCcBrokerDesdeUi() {
   const v = el?.value;
   if (v === CC_BROKER_INVIU) return CC_BROKER_INVIU;
   if (v === CC_BROKER_PPI) return CC_BROKER_PPI;
+  if (v === CC_BROKER_CONEJ) return CC_BROKER_CONEJ;
   return CC_BROKER_BALANZ;
 }
 
@@ -202,6 +234,12 @@ function mensajeImportarMovsPendiente() {
     return (
       base +
       "PPI (Portfolio Personal): el ticker y el tipo de operación van en «Descripción» (COMPRA/VENTA, ingreso o retiro de fondos, renta, amortización, dividendo en efectivo, retenciones); sin columna «Operación». Misma inferencia de instrumento que Inviu (texto + ticker normalizado)."
+    );
+  }
+  if (b === CC_BROKER_CONEJ) {
+    return (
+      base +
+      "Conej: columnas Moneda, Fecha, Descripción, Instrumento/Código ISIN, Cantidad, Precio, Importe y Tipo de movimiento. Los ISIN se intentan resolver a ticker y nombre (OpenFIGI). La clasificación combina tipo de movimiento y descripción."
     );
   }
   return base + "Balanz: sin las reglas extra de Inviu (Operación, ticker en descripción, etc.).";
@@ -268,7 +306,7 @@ function leerTenenciasManuales() {
       throw new Error(`Tenencia inicial fila ${n}: precio unitario inválido (≥ 0).`);
     }
     let tNorm = normalizarTextoComparacion(ticker);
-    if (esBrokerInferenciaInviuOPpi(leerCcBrokerDesdeUi()) && tNorm) {
+    if (esBrokerInferenciaTipoActivoFlex(leerCcBrokerDesdeUi()) && tNorm) {
       tNorm = normalizarTickerActivoInviu(tNorm);
     }
     lotes.push({
@@ -438,7 +476,7 @@ function etiquetaTipoActivoInferido(d) {
 function etiquetaTickerDetalleExcel(d) {
   const c = d.ticker || "";
   const a = d.tickerArchivo;
-  if (esBrokerInferenciaInviuOPpi(d.broker ?? CC_BROKER_BALANZ)) {
+  if (esBrokerInferenciaTipoActivoFlex(d.broker ?? CC_BROKER_BALANZ)) {
     return c || "—";
   }
   if (a && c && String(a) !== String(c)) return `${c} (${a})`;
@@ -518,6 +556,8 @@ function etiquetaRubroTipoLinea(tipoLinea) {
     rescate_caucion_colocadora: "Cobrado caución colocadora",
     pedido_caucion_tomadora: "Pedido caución tomadora",
     pagado_caucion_tomadora: "Pagado caución tomadora",
+    giro_descubierto: "Giro en descubierto",
+    gasto_cuenta_conej: "Gastos de cuenta (Conej)",
     ingreso_dividendo: "Dividendos en efectivo (sin PEPS)",
     ingreso_renta: "Renta (sin PEPS)",
     ingreso_renta_y_amortizacion: "Renta y amortización",
@@ -602,7 +642,7 @@ function claseBonoInviuPorFuente(fuente) {
 
 function claseInstrumentoPeps(d) {
   if (!esOperacionPepsMovimiento(d)) return null;
-  if (esBrokerInferenciaInviuOPpi(d.broker ?? CC_BROKER_BALANZ)) {
+  if (esBrokerInferenciaTipoActivoFlex(d.broker ?? CC_BROKER_BALANZ)) {
     let inf = d.tipoActivoInferido;
     let fuente = d.tipoActivoFuente;
     if (inf === "corporativos") return "corporativos";
@@ -688,6 +728,9 @@ function filaExcluidaDeHojaRubroPorTipo(d, tipoLineaKey) {
   if (tipoLineaKey === "ingresos_cuenta" || tipoLineaKey === "salidas_cuenta") {
     return true;
   }
+  if (tipoLineaKey === "giro_descubierto" || tipoLineaKey === "gasto_cuenta_conej") {
+    return true;
+  }
   if (
     tipoLineaKey === "compra" ||
     tipoLineaKey === "venta" ||
@@ -713,6 +756,9 @@ function movimientosAgrupadosPorClase(detalle, clase) {
           d.tipoLinea === "ingresos_cuenta" || d.tipoLinea === "salidas_cuenta"
       );
       break;
+    case "giro_descubierto":
+      rows = detalle.filter((d) => d.tipoLinea === "giro_descubierto");
+      break;
     case "peps_acciones":
       rows = detalle.filter((d) => claseInstrumentoPeps(d) === "acciones");
       return ordenarPorTickerLuegoFecha(rows);
@@ -729,7 +775,8 @@ function movimientosAgrupadosPorClase(detalle, clase) {
       rows = detalle.filter(
         (d) =>
           d.tipoLinea === "gasto_iva_o_descubierto" ||
-          d.tipoLinea === "impuestos_y_retenciones"
+          d.tipoLinea === "impuestos_y_retenciones" ||
+          d.tipoLinea === "gasto_cuenta_conej"
       );
       break;
     case "renta_y_amortizacion_excel":
@@ -806,7 +853,7 @@ function exportarExcelCC(resultado) {
     else if (d.tipoLinea === "venta") nVentasDet++;
     else if (d.tipoLinea === "compra_sin_cantidad") nCompraSinCantDet++;
   }
-  const brokerFlexTicker = esBrokerInferenciaInviuOPpi(ultimoBrokerMovsCC);
+  const brokerFlexTicker = esBrokerInferenciaTipoActivoFlex(ultimoBrokerMovsCC);
   const etiquetaColTickerDetalle = brokerFlexTicker
     ? "Ticker (PEPS)"
     : "Ticker (PEPS; archivo si difiere)";
@@ -829,6 +876,8 @@ function exportarExcelCC(resultado) {
     [],
     ["Ingresos de Dinero en la Cuenta", fmtContabilidad(cf.ingresos_cuenta, 2)],
     ["Salidas de Dinero en la Cuenta", fmtContabilidad(cf.salidas_cuenta, 2)],
+    ["Giro en descubierto (intereses / ingreso-egreso fondos)", fmtContabilidad(cf.giro_descubierto ?? 0, 2)],
+    ["Gastos de cuenta (Conej)", fmtContabilidad(cf.gastos_cuenta_conej ?? 0, 2)],
     ["Cobrado Caución Colocadora", fmtContabilidad(cf.rescate_caucion_colocadora, 2)],
     ["Prestado Caución Colocadora", fmtContabilidad(cf.suscripcion_caucion_colocadora, 2)],
     ["Pedido Caución Tomadora", fmtContabilidad(cf.pedido_caucion_tomadora ?? 0, 2)],
@@ -992,6 +1041,7 @@ function exportarExcelCC(resultado) {
     ["Caucion Colocadora", "caucion_colocadora", null],
     ["Caución Tomadora", "caucion_tomadora", null],
     ["Ingresos y egresos de dinero en cuenta", "caja_dinero", "Dinero en cuenta"],
+    ["Giro en descubierto", "giro_descubierto", null],
     ["Acciones", "peps_acciones", null],
     ["Cedears", "peps_cedears", null],
     ["Corporativos", "peps_corporativos", null],
@@ -1076,6 +1126,19 @@ async function ejecutarAnalisisCC() {
     return;
   }
 
+  const brokerMovs = filasMovs.broker ?? leerCcBrokerDesdeUi();
+  if (brokerMovs === CC_BROKER_CONEJ) {
+    try {
+      movimientos = await enriquecerMovimientosConejIsin(movimientos);
+    } catch (e) {
+      mostrarErrorCC(e.message || String(e));
+      $("ccPanelResultados").hidden = true;
+      $("btnExportarCC").disabled = true;
+      ccAnalisisEnCurso = false;
+      return;
+    }
+  }
+
   const monedaInforme = selMoneda.value;
   if (!["ARS", "USD", "CV7000", "ORIGEN"].includes(monedaInforme)) {
     mostrarErrorCC("Moneda del informe no válida.");
@@ -1147,6 +1210,10 @@ async function ejecutarAnalisisCC() {
   const cf = resultado.cashFlows;
   $("ccIngresos").textContent = fmtContabilidad(cf.ingresos_cuenta, 2);
   $("ccSalidas").textContent = fmtContabilidad(cf.salidas_cuenta, 2);
+  const elGiro = $("ccGiroDesc");
+  if (elGiro) elGiro.textContent = fmtContabilidad(cf.giro_descubierto ?? 0, 2);
+  const elGastosConej = $("ccGastosCuentaConej");
+  if (elGastosConej) elGastosConej.textContent = fmtContabilidad(cf.gastos_cuenta_conej ?? 0, 2);
   $("ccApcolfut").textContent = fmtContabilidad(cf.rescate_caucion_colocadora, 2);
   $("ccApcolcon").textContent = fmtContabilidad(cf.suscripcion_caucion_colocadora, 2);
   $("ccAptomcon").textContent = fmtContabilidad(cf.pedido_caucion_tomadora ?? 0, 2);

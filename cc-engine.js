@@ -15,6 +15,8 @@ export const CC_BROKER_BALANZ = "BALANZ";
 export const CC_BROKER_INVIU = "INVIU";
 /** Portfolio Personal Inversiones (PPI): ticker y tipo de operación en «Descripción»; sin columna «Operación». */
 export const CC_BROKER_PPI = "PPI";
+/** Conej: columnas Moneda, Fecha, Descripción, ISIN, Cantidad, Precio, Importe, Tipo de movimiento. */
+export const CC_BROKER_CONEJ = "CONEJ";
 
 export function esBrokerInviu(broker) {
   return broker === CC_BROKER_INVIU;
@@ -24,9 +26,18 @@ export function esBrokerPpi(broker) {
   return broker === CC_BROKER_PPI;
 }
 
+export function esBrokerConej(broker) {
+  return broker === CC_BROKER_CONEJ;
+}
+
 /** Misma inferencia de tipo de activo / CEDEAR que Inviu (descripción + ticker). */
 export function esBrokerInferenciaInviuOPpi(broker) {
   return esBrokerInviu(broker) || esBrokerPpi(broker);
+}
+
+/** Inferencia de tipo de activo por texto + ticker (Inviu, PPI o Conej tras resolver ISIN). */
+export function esBrokerInferenciaTipoActivoFlex(broker) {
+  return esBrokerInferenciaInviuOPpi(broker) || esBrokerConej(broker);
 }
 
 function parseNumAR(v) {
@@ -416,6 +427,18 @@ export function clasificarIngresoTituloSinPeps(
   if (esBrokerPpi(broker) && (/\bCOMPRA\b/.test(d) || /\bVENTA\b/.test(d))) {
     return null;
   }
+  if (esBrokerConej(broker) && (/\bCOMPRA\b/.test(d) || /\bVENTA\b/.test(d))) {
+    return null;
+  }
+  if (esBrokerConej(broker)) {
+    if (d.includes("CASH DIVIDEND")) return "dividendo";
+    if (
+      d.includes("INTEREST") &&
+      !(d.includes("INTERESES") && d.includes("SALDO") && d.includes("DEUDOR"))
+    ) {
+      return "renta";
+    }
+  }
   if (d.includes("DIVIDENDO EN EFECTIVO")) return "dividendo";
   /* Inviu / PPI: a veces el extracto dice solo «DIVIDENDO» o «… DIVIDENDO …» sin la frase fija de Balanz. */
   if ((esBrokerInviu(broker) || esBrokerPpi(broker)) && d.includes("DIVIDENDO"))
@@ -497,7 +520,7 @@ export function parsearTenenciasInicialesExcel(
   filas,
   broker = CC_BROKER_BALANZ
 ) {
-  const normTickBroker = esBrokerInferenciaInviuOPpi(broker);
+  const normTickBroker = esBrokerInferenciaInviuOPpi(broker) || esBrokerConej(broker);
   const lotes = [];
   for (let r = 0; r < filas.length; r++) {
     const row = filas[r];
@@ -687,13 +710,22 @@ export function detectarMapaColumnasMovimientos(cabecerasRaw) {
   });
   if (idxImp === idxPrecio && idxImp >= 0) idxImp = -1;
 
-  const idxTicker = firstMatch(
+  let idxTicker = firstMatch(
     (h) =>
       h.includes("TICKER") ||
       h.includes("ESPECIE") ||
       h.includes("SIMBOLO") ||
       h.includes("SIMBOL")
   );
+  if (idxTicker < 0) {
+    idxTicker = firstMatch(
+      (h) =>
+        h.includes("CODIGO ISIN") ||
+        h.includes("CODIGOISIN") ||
+        (h.includes("ISIN") && !h.includes("MONEDA")) ||
+        (h.includes("INSTRUMENTO") && h.includes("ISIN"))
+    );
+  }
 
   const idxTipo = firstMatch(
     (h) =>
@@ -712,7 +744,9 @@ export function detectarMapaColumnasMovimientos(cabecerasRaw) {
       h.startsWith("OPERACION ") ||
       (h.includes("OPERACION") && !h.includes("CODIGO")) ||
       h.includes("TIPO DE OPERACION") ||
-      h.includes("TIPO OPERACION")
+      h.includes("TIPO OPERACION") ||
+      (h.includes("TIPO") && h.includes("MOVIMIENTO")) ||
+      h.includes("TIPO DE MOVIMIENTOS")
   );
 
   const faltan = [];
@@ -828,7 +862,9 @@ export function parsearMovimientosExcel(
 ) {
   const inviu = esBrokerInviu(broker);
   const ppi = esBrokerPpi(broker);
+  const conej = esBrokerConej(broker);
   const flexTick = esBrokerInferenciaInviuOPpi(broker);
+  const flexInferencia = esBrokerInferenciaTipoActivoFlex(broker);
   const ops = [];
   for (let r = 0; r < filas.length; r++) {
     const row = filas[r];
@@ -845,9 +881,10 @@ export function parsearMovimientosExcel(
       throw new Error(`Movimientos fila ${r + 2}: fecha de concertación inválida.`);
     }
     const descripcion = String(leerCeldaMovimiento(row, mapa.descripcion) ?? "");
-    const operacionBroker = inviu
-      ? String(leerCeldaMovimiento(row, mapa.operacion ?? -1) ?? "").trim()
-      : "";
+    const operacionBroker =
+      inviu || conej
+        ? String(leerCeldaMovimiento(row, mapa.operacion ?? -1) ?? "").trim()
+        : "";
     let tickerCol = String(leerCeldaMovimiento(row, mapa.ticker) ?? "").trim();
     let tickerExtraidoDesdeDesc = false;
     if (inviu && !tickerCol) {
@@ -866,7 +903,7 @@ export function parsearMovimientosExcel(
     }
     const tickerArchivo = tickerCol ? normalizarTextoComparacion(tickerCol) : "";
     const ticker =
-      flexTick && tickerArchivo
+      flexTick && tickerArchivo && !conej
         ? normalizarTickerActivoInviu(tickerArchivo)
         : tickerArchivo;
     const tipoInstrumento = String(leerCeldaMovimiento(row, mapa.tipoInstrumento) ?? "").trim();
@@ -887,7 +924,7 @@ export function parsearMovimientosExcel(
     const importe = parseNumAR(leerCeldaMovimiento(row, mapa.importe));
 
     let tipoAct =
-      flexTick && ticker
+      flexInferencia && ticker
         ? inferirTipoActivoMovimientoInviu(ticker, descripcion, broker)
         : { tipo: null, fuente: "—" };
 
@@ -897,6 +934,7 @@ export function parsearMovimientosExcel(
     if (
       ticker &&
       cantidadCero &&
+      !esBrokerConej(broker) &&
       !esIngresoTituloSinPeps(descripcion, operacionBroker, broker) &&
       !esGastoCorreccionIvaODescubierto(descripcion) &&
       !esImpuestoRetencion(descripcion)
@@ -910,7 +948,7 @@ export function parsearMovimientosExcel(
       fechaConc,
       descripcion,
       ticker,
-      tickerArchivo: flexTick ? tickerArchivo : "",
+      tickerArchivo: flexTick || conej ? tickerArchivo : "",
       nombreActivoInviu: inviu
         ? extraerNombreActivoDesdeDescripcionInviu(descripcion) || ""
         : ppi
@@ -951,7 +989,9 @@ export function interpretarFilaMovimientoExcel(
 ) {
   const inviu = esBrokerInviu(broker);
   const ppi = esBrokerPpi(broker);
+  const conej = esBrokerConej(broker);
   const flexTick = esBrokerInferenciaInviuOPpi(broker);
+  const flexInferencia = esBrokerInferenciaTipoActivoFlex(broker);
   const fechaRaw = leerCeldaMovimiento(row, mapa.fechaConc);
   if (
     fechaRaw === undefined ||
@@ -965,9 +1005,10 @@ export function interpretarFilaMovimientoExcel(
     return null;
   }
   const descripcion = String(leerCeldaMovimiento(row, mapa.descripcion) ?? "");
-  const operacionBroker = inviu
-    ? String(leerCeldaMovimiento(row, mapa.operacion ?? -1) ?? "").trim()
-    : "";
+  const operacionBroker =
+    inviu || conej
+      ? String(leerCeldaMovimiento(row, mapa.operacion ?? -1) ?? "").trim()
+      : "";
   let tickerCol = String(leerCeldaMovimiento(row, mapa.ticker) ?? "").trim();
   let tickerExtraidoDesdeDesc = false;
   if (inviu && !tickerCol) {
@@ -985,7 +1026,7 @@ export function interpretarFilaMovimientoExcel(
   }
   const tickerArchivo = tickerCol ? normalizarTextoComparacion(tickerCol) : "";
   const ticker =
-    flexTick && tickerArchivo
+    flexTick && tickerArchivo && !conej
       ? normalizarTickerActivoInviu(tickerArchivo)
       : tickerArchivo;
   const tipoInstrumento = String(leerCeldaMovimiento(row, mapa.tipoInstrumento) ?? "").trim();
@@ -1006,7 +1047,7 @@ export function interpretarFilaMovimientoExcel(
   const importe = parseNumAR(leerCeldaMovimiento(row, mapa.importe));
 
   let tipoAct =
-    flexTick && ticker
+    flexInferencia && ticker
       ? inferirTipoActivoMovimientoInviu(ticker, descripcion, broker)
       : { tipo: null, fuente: "—" };
 
@@ -1016,6 +1057,7 @@ export function interpretarFilaMovimientoExcel(
   if (
     ticker &&
     cantidadCero &&
+    !esBrokerConej(broker) &&
     !esIngresoTituloSinPeps(descripcion, operacionBroker, broker) &&
     !esGastoCorreccionIvaODescubierto(descripcion) &&
     !esImpuestoRetencion(descripcion)
@@ -1027,7 +1069,7 @@ export function interpretarFilaMovimientoExcel(
     fechaConc,
     descripcion,
     ticker,
-    tickerArchivo: flexTick ? tickerArchivo : "",
+    tickerArchivo: flexTick || conej ? tickerArchivo : "",
     nombreActivoInviu: inviu
       ? extraerNombreActivoDesdeDescripcionInviu(descripcion) || ""
       : ppi
@@ -1100,6 +1142,21 @@ export function aplicaConsolidacionCodigoOperacion(
  */
 function priorizarOperacionCajaSobreTicker(m) {
   const br = m.broker ?? CC_BROKER_BALANZ;
+  if (esBrokerConej(br)) {
+    const o = normalizarTextoComparacion(String(m.operacionBroker || ""));
+    if (
+      (o.includes("INGRESO") && o.includes("FONDO")) ||
+      (o.includes("EGRESO") && o.includes("FONDO"))
+    ) {
+      return {
+        ...m,
+        ticker: "",
+        tickerArchivo: "",
+        nombreActivoInviu: "",
+        tickerExtraidoDesdeDescripcion: false,
+      };
+    }
+  }
   if (esBrokerInviu(br)) {
     const o = normalizarTextoComparacion(String(m.operacionBroker || ""));
     if (!o) return m;
@@ -1341,6 +1398,10 @@ export function clasificarFlujoCaja(
     const porOp = clasificarFlujoCajaSoloOperacion(o);
     if (porOp) return porOp;
   }
+  if (esBrokerConej(broker) && o) {
+    const porOp = clasificarFlujoCajaSoloOperacion(o);
+    if (porOp) return porOp;
+  }
   const d = normalizarTextoComparacion(descripcion);
   if (esBrokerPpi(broker)) {
     if (d.includes("INGRESO") && d.includes("FONDO")) return "ingresos_cuenta";
@@ -1436,6 +1497,17 @@ function esCompra(m) {
   const op = normalizarTextoComparacion(String(m.operacionBroker || ""));
   const br = m.broker ?? CC_BROKER_BALANZ;
   const d = normalizarTextoComparacion(String(m.descripcion || ""));
+  /* Conej: COMPRA / VENTA en columna «Tipo de movimiento». */
+  if (esBrokerConej(br)) {
+    const hasV = /\bVENTA\b/.test(op) || op.includes("VENTA");
+    const hasC = /\bCOMPRA\b/.test(op) || op.includes("COMPRA");
+    if (hasV && !hasC) return false;
+    if (hasC && !hasV) return true;
+    const c = m.cantidad;
+    if (c != null && c > 0) return true;
+    if (c != null && c < 0) return false;
+    return true;
+  }
   /*
    * PPI: la magnitud es siempre |cantidad|; COMPRA/VENTA en descripción define si suma o resta al PEPS.
    * Sin palabra clara, se usa el signo del importe (compra suele debitar, venta acreditar).
@@ -1550,7 +1622,7 @@ export function tipoCambioLado(m) {
   const br = m.broker ?? CC_BROKER_BALANZ;
   const ingresoTituloSinPeps =
     esIngresoTituloSinPeps(m.descripcion, m.operacionBroker, br) &&
-    (cantCero || esBrokerInviu(br) || esBrokerPpi(br));
+    (cantCero || esBrokerInviu(br) || esBrokerPpi(br) || esBrokerConej(br));
   if (ingresoTituloSinPeps) {
     if (imp != null && imp > 0) return "vendedor";
     if (imp != null && imp < 0) return "comprador";
@@ -1591,15 +1663,15 @@ function prioridadOrdenPepsMismoTicker(m) {
   const br = m.broker ?? CC_BROKER_BALANZ;
   if (
     esIngresoTituloSinPeps(m.descripcion, m.operacionBroker, br) &&
-    (cero || esBrokerInviu(br) || esBrokerPpi(br))
+    (cero || esBrokerInviu(br) || esBrokerPpi(br) || esBrokerConej(br))
   ) {
     return 1;
   }
   /*
-   * Inviu / PPI: el signo de «Cantidad» puede no seguir «positivo=compra / negativo=venta»
+   * Inviu / PPI / Conej: el signo de «Cantidad» puede no seguir «positivo=compra / negativo=venta»
    * (p. ej. nominales en negativo en compras); «Operación» o COMPRA/VENTA en descripción mandan.
    */
-  if (esBrokerInviu(br) || esBrokerPpi(br)) {
+  if (esBrokerInviu(br) || esBrokerPpi(br) || esBrokerConej(br)) {
     return esCompra(m) ? 0 : 2;
   }
   if (cant != null && cant > 0) return 0;
@@ -1689,6 +1761,78 @@ function nombreActivoParaLoteTenencia(ticker, mapaDesdeMovs) {
 }
 
 /**
+ * Reglas específicas Conej (tipo de movimiento + descripción) antes del flujo genérico PEPS/caja.
+ * @returns {{ tipoLinea: string, cashKey: string, stripTicker: boolean } | null} null → continuar con lógica estándar.
+ */
+function preclasificarMovimientoConej(m) {
+  if (!esBrokerConej(m.broker ?? CC_BROKER_BALANZ)) return null;
+  const op = normalizarTextoComparacion(String(m.operacionBroker || ""));
+  const d = normalizarTextoComparacion(String(m.descripcion || ""));
+  const tick = normalizarTextoComparacion(String(m.ticker || ""));
+  const cant = m.cantidad;
+  const qtyNonZero = cant != null && Math.abs(cant) > 1e-9;
+  const strip = { stripTicker: true };
+
+  if (d.includes("INTERESES") && d.includes("SALDO") && d.includes("DEUDOR")) {
+    return { tipoLinea: "giro_descubierto", cashKey: "giro_descubierto", ...strip };
+  }
+  if (
+    (op.includes("INGRESO") && op.includes("FONDO")) ||
+    (op.includes("EGRESO") && op.includes("FONDO"))
+  ) {
+    return { tipoLinea: "giro_descubierto", cashKey: "giro_descubierto", ...strip };
+  }
+  if (op.includes("EGRESO") && op.includes("GARANTIA") && op.includes("CAUCION")) {
+    return { tipoLinea: "pagado_caucion_tomadora", cashKey: "pagado_caucion_tomadora", ...strip };
+  }
+  if (d.includes("TOMADORA") && (d.includes("CAUCION") || d.includes("CAUC"))) {
+    if (d.includes("PEDIDO") || d.includes("SOLICIT")) {
+      return { tipoLinea: "pedido_caucion_tomadora", cashKey: "pedido_caucion_tomadora", ...strip };
+    }
+    return { tipoLinea: "pagado_caucion_tomadora", cashKey: "pagado_caucion_tomadora", ...strip };
+  }
+  if (op.includes("MANTENIMIENTO") && op.includes("CUENTA")) {
+    return { tipoLinea: "gasto_cuenta_conej", cashKey: "gastos_cuenta_conej", ...strip };
+  }
+  if (d.includes("GASTOS BANCARIOS") || d.includes("GASTO BANCARIO")) {
+    return { tipoLinea: "gasto_cuenta_conej", cashKey: "gastos_cuenta_conej", ...strip };
+  }
+  if (d.includes("COSTO CONVERSION") || d.includes("COSTO CONVERSI")) {
+    return { tipoLinea: "gasto_cuenta_conej", cashKey: "gastos_cuenta_conej", ...strip };
+  }
+  if (d.includes("CASH DIVIDEND")) {
+    return { tipoLinea: "ingreso_dividendo", cashKey: "ingresos_dividendos", ...strip };
+  }
+  if (d.includes("INTEREST") && !d.includes("INTERESES SALDO")) {
+    return { tipoLinea: "ingreso_renta", cashKey: "ingresos_renta", ...strip };
+  }
+  if (/\bCOMPRA\b/.test(op) || /\bVENTA\b/.test(op)) {
+    return null;
+  }
+  if ((op.includes("CREDITOS VARIOS") || op.includes("CREDITO VARIO")) && tick && qtyNonZero) {
+    return null;
+  }
+  if (
+    op.includes("DEBITOS VARIOS") ||
+    op.includes("DEBITO VARIO") ||
+    op.includes("ACREENCIAS")
+  ) {
+    const tipo = clasificarFlujoCaja(m.descripcion, m.operacionBroker, CC_BROKER_CONEJ);
+    if (tipo) return { tipoLinea: tipo, cashKey: tipo, ...strip };
+    return { tipoLinea: "concepto_a_definir", cashKey: "concepto_a_definir", ...strip };
+  }
+  if (op.includes("SUSCRIPCION") && !op.includes("CAUCION")) {
+    return { tipoLinea: "fci_liquidacion_suscripcion", cashKey: "fci_liquidacion_suscripcion", ...strip };
+  }
+  if (op.includes("RESCATE") && !op.includes("CAUCION")) {
+    return { tipoLinea: "fci_liquidacion_rescate", cashKey: "fci_liquidacion_rescate", ...strip };
+  }
+  const porOp = clasificarFlujoCajaSoloOperacion(op);
+  if (porOp) return { tipoLinea: porOp, cashKey: porOp, ...strip };
+  return null;
+}
+
+/**
  * @param {Array<{ ticker: string, cantidad: number, precioUnitario: number, totalCost: number }>} tenenciasLotes orden PEPS (primero = más antiguo)
  * @param {Array} movimientos parseados
  */
@@ -1730,6 +1874,8 @@ export function procesarCuentaComitente(tenenciasLotes, movimientos) {
     gastos_iva_correccion_descubierto: 0,
     impuestos_y_retenciones: 0,
     concepto_a_definir: 0,
+    giro_descubierto: 0,
+    gastos_cuenta_conej: 0,
   };
 
   const detalleMovs = [];
@@ -1737,6 +1883,25 @@ export function procesarCuentaComitente(tenenciasLotes, movimientos) {
 
   for (const raw of movimientos) {
     const m = priorizarOperacionCajaSobreTicker(raw);
+    const brConej = m.broker ?? CC_BROKER_BALANZ;
+    if (esBrokerConej(brConej)) {
+      const cone = preclasificarMovimientoConej(m);
+      if (cone) {
+        const imp = m.importe != null ? m.importe : 0;
+        if (cashFlows[cone.cashKey] !== undefined) {
+          cashFlows[cone.cashKey] += imp;
+        }
+        const base = cone.stripTicker
+          ? { ...m, ticker: "", tickerArchivo: "" }
+          : { ...m };
+        detalleMovs.push({
+          ...base,
+          tipoLinea: cone.tipoLinea,
+          peps: null,
+        });
+        continue;
+      }
+    }
     const tick = m.ticker;
     const cantM = m.cantidad;
     const cantidadCeroM =
@@ -1792,7 +1957,7 @@ export function procesarCuentaComitente(tenenciasLotes, movimientos) {
     const brProc = m.broker ?? CC_BROKER_BALANZ;
     if (
       esIngresoTituloSinPeps(m.descripcion, m.operacionBroker, brProc) &&
-      (cantidadCeroM || esBrokerInviu(brProc) || esBrokerPpi(brProc))
+      (cantidadCeroM || esBrokerInviu(brProc) || esBrokerPpi(brProc) || esBrokerConej(brProc))
     ) {
       const imp = m.importe != null ? m.importe : 0;
       const bucket = clasificarIngresoTituloSinPeps(
