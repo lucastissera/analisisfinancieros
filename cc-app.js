@@ -22,6 +22,11 @@ import {
 } from "./cc-fx.js";
 import { obtenerCotizacionesPorFechas } from "./cc-fx-rates.js";
 import { inferirTipoActivoArgentinorSync } from "./cc-instrumentos-arg.js";
+import {
+  fmtContabilidad,
+  celdaMontoExcel,
+  celdaCantidadExcel,
+} from "./formato-contabilidad.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -43,25 +48,6 @@ function etiquetaMonedaInforme(v) {
   return "Pesos (ARS)";
 }
 
-function fmtNum(n, dec = 2) {
-  if (n == null || !Number.isFinite(n)) return "—";
-  return n.toLocaleString("es-AR", {
-    minimumFractionDigits: dec,
-    maximumFractionDigits: dec,
-  });
-}
-
-function clonarAoaFormatearNumerosInviu(aoa) {
-  return aoa.map((row) => {
-    if (!Array.isArray(row)) return row;
-    return row.map((cell) =>
-      typeof cell === "number" && Number.isFinite(cell)
-        ? fmtNum(cell, 2)
-        : cell
-    );
-  });
-}
-
 function ajustarAnchosColumnasHoja(ws, XLSX) {
   if (!ws["!ref"]) return;
   const range = XLSX.utils.decode_range(ws["!ref"]);
@@ -80,15 +66,14 @@ function ajustarAnchosColumnasHoja(ws, XLSX) {
   ws["!cols"] = cols;
 }
 
-function sheetDesdeAoaConEstilo(XLSX, aoa, esInviu) {
-  const data = esInviu ? clonarAoaFormatearNumerosInviu(aoa) : aoa;
-  const ws = XLSX.utils.aoa_to_sheet(data);
+function sheetDesdeAoaConEstilo(XLSX, aoa) {
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
   ajustarAnchosColumnasHoja(ws, XLSX);
   return ws;
 }
 
-function bookAppendAoa(wb, XLSX, aoa, nombreHoja, esInviu) {
-  const ws = sheetDesdeAoaConEstilo(XLSX, aoa, esInviu);
+function bookAppendAoa(wb, XLSX, aoa, nombreHoja) {
+  const ws = sheetDesdeAoaConEstilo(XLSX, aoa);
   XLSX.utils.book_append_sheet(wb, ws, nombreHoja);
 }
 
@@ -299,6 +284,33 @@ function monedaOriginalCelda(d) {
   return String(m);
 }
 
+/** Cantidad / precio / importe del archivo ya parseados como números o texto numérico. */
+function formatearFilaOrigenNumerica(wide, mapa) {
+  const out = [...wide];
+  const aNum = (v) => {
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    if (v != null && v !== "") {
+      const n = parseNumLocal(v);
+      if (n != null && Number.isFinite(n)) return n;
+    }
+    return null;
+  };
+  const applyCant = (idx) => {
+    if (idx < 0 || idx >= out.length) return;
+    const n = aNum(out[idx]);
+    if (n != null) out[idx] = celdaCantidadExcel(n);
+  };
+  const applyMonto = (idx) => {
+    if (idx < 0 || idx >= out.length) return;
+    const n = aNum(out[idx]);
+    if (n != null) out[idx] = celdaMontoExcel(n, 2);
+  };
+  applyCant(mapa.cantidad);
+  applyMonto(mapa.precio);
+  applyMonto(mapa.importe);
+  return out;
+}
+
 /**
  * Hoja con las mismas columnas que el Excel importado, más moneda original explícita, importe en moneda del informe y tipo de cambio.
  */
@@ -327,8 +339,9 @@ function construirHojaOrigenConImporteConvertido(cotMap, monedaInforme) {
   const out = [cab];
   for (let r = 0; r < filasRaw.length; r++) {
     const row = filasRaw[r];
-    const wide = filaOrigenExcelAI(row);
+    let wide = filaOrigenExcelAI(row);
     while (wide.length < ancho) wide.push("");
+    wide = formatearFilaOrigenNumerica(wide.slice(0, ancho), mapa);
     const mov = interpretarFilaMovimientoExcel(
       row,
       r + 2,
@@ -345,7 +358,7 @@ function construirHojaOrigenConImporteConvertido(cotMap, monedaInforme) {
     }
     if (monedaInforme === "ORIGEN" && mov) {
       if (mov.importe != null && Number.isFinite(mov.importe)) {
-        importeConv = mov.importe;
+        importeConv = celdaMontoExcel(mov.importe, 2);
       }
       tcRef = "(sin conversión)";
       out.push([...wide.slice(0, ancho), monedaOrig, importeConv, tcRef]);
@@ -364,15 +377,18 @@ function construirHojaOrigenConImporteConvertido(cotMap, monedaInforme) {
           lado
         );
         if (tc != null && Number.isFinite(tc)) {
-          tcRef = tc;
+          tcRef = celdaMontoExcel(tc, 4);
         }
         if (mov.importe != null && Number.isFinite(mov.importe)) {
-          importeConv = convertirImporteAInforme(
-            mov.importe,
-            monedaNorm,
-            monedaInforme,
-            cot,
-            lado
+          importeConv = celdaMontoExcel(
+            convertirImporteAInforme(
+              mov.importe,
+              monedaNorm,
+              monedaInforme,
+              cot,
+              lado
+            ),
+            2
           );
         }
       }
@@ -419,13 +435,15 @@ function filaDetalleMovimientoExcel(d) {
     etiquetaTipoActivoInferido(d),
     d.descripcion,
     d.tipoLinea,
-    d.cantidad ?? "",
-    d.precio ?? "",
-    d.importe ?? "",
+    celdaCantidadExcel(d.cantidad),
+    celdaMontoExcel(d.precio, 2),
+    celdaMontoExcel(d.importe, 2),
     monedaOriginalCelda(d),
-    d.peps?.resultado != null ? d.peps.resultado : "",
+    d.peps?.resultado != null && Number.isFinite(d.peps.resultado)
+      ? fmtContabilidad(d.peps.resultado, 2)
+      : "",
     d.gastoOperacionAsociado != null && Number.isFinite(d.gastoOperacionAsociado)
-      ? d.gastoOperacionAsociado
+      ? fmtContabilidad(d.gastoOperacionAsociado, 2)
       : "",
   ];
 }
@@ -457,7 +475,11 @@ function importeOrigenPepsParaExcel(d) {
 
 function filaDetalleMovimientoExcelHojaPeps(d) {
   const row = filaDetalleMovimientoExcel(d);
-  row[9] = importeOrigenPepsParaExcel(d);
+  const orig = importeOrigenPepsParaExcel(d);
+  row[9] =
+    typeof orig === "number" && Number.isFinite(orig)
+      ? fmtContabilidad(orig, 2)
+      : "";
   return row;
 }
 
@@ -721,8 +743,7 @@ function appendHojaAgrupadaClase(
   filaFn,
   nombresReservados,
   nombreHojaSheet,
-  sumarCostoOrigenPeps,
-  esInviu
+  sumarCostoOrigenPeps
 ) {
   let sumImp = 0;
   for (const d of rows) {
@@ -736,7 +757,7 @@ function appendHojaAgrupadaClase(
   }
   const aoa = [
     [tituloFila],
-    ["Total importe (suma algebraica)", sumImp],
+    ["Total importe (suma algebraica)", fmtContabilidad(sumImp, 2)],
     [],
     cabCabecera,
     ...rows.map((d) => filaFn(d)),
@@ -745,7 +766,7 @@ function appendHojaAgrupadaClase(
     nombreHojaSheet != null ? nombreHojaSheet : tituloFila,
     nombresReservados
   );
-  const ws = sheetDesdeAoaConEstilo(XLSX, aoa, esInviu);
+  const ws = sheetDesdeAoaConEstilo(XLSX, aoa);
   XLSX.utils.book_append_sheet(wb, ws, nombre);
 }
 
@@ -773,36 +794,39 @@ function exportarExcelCC(resultado) {
     ["Moneda del informe", etiquetaMonedaInforme(ultimoMonedaInforme)],
     notaCotizacion,
     [],
-    ["Ingresos de Dinero en la Cuenta", cf.ingresos_cuenta],
-    ["Salidas de Dinero en la Cuenta", cf.salidas_cuenta],
-    ["Cobrado Caución Colocadora", cf.rescate_caucion_colocadora],
-    ["Prestado Caución Colocadora", cf.suscripcion_caucion_colocadora],
-    ["Pedido Caución Tomadora", cf.pedido_caucion_tomadora ?? 0],
-    ["Pagado Caución Tomadora", cf.pagado_caucion_tomadora ?? 0],
-    ["Liquidación FCI — suscripción", cf.fci_liquidacion_suscripcion ?? 0],
-    ["Liquidación FCI — rescate", cf.fci_liquidacion_rescate ?? 0],
-    ["Dividendos en efectivo (sin PEPS)", cf.ingresos_dividendos ?? 0],
-    ["Renta y amortización", cf.ingresos_renta_y_amortizacion ?? 0],
-    ["Renta (sin PEPS)", cf.ingresos_renta ?? 0],
-    ["Amortización", cf.ingresos_amortizacion ?? 0],
+    ["Ingresos de Dinero en la Cuenta", fmtContabilidad(cf.ingresos_cuenta, 2)],
+    ["Salidas de Dinero en la Cuenta", fmtContabilidad(cf.salidas_cuenta, 2)],
+    ["Cobrado Caución Colocadora", fmtContabilidad(cf.rescate_caucion_colocadora, 2)],
+    ["Prestado Caución Colocadora", fmtContabilidad(cf.suscripcion_caucion_colocadora, 2)],
+    ["Pedido Caución Tomadora", fmtContabilidad(cf.pedido_caucion_tomadora ?? 0, 2)],
+    ["Pagado Caución Tomadora", fmtContabilidad(cf.pagado_caucion_tomadora ?? 0, 2)],
+    ["Liquidación FCI — suscripción", fmtContabilidad(cf.fci_liquidacion_suscripcion ?? 0, 2)],
+    ["Liquidación FCI — rescate", fmtContabilidad(cf.fci_liquidacion_rescate ?? 0, 2)],
+    ["Dividendos en efectivo (sin PEPS)", fmtContabilidad(cf.ingresos_dividendos ?? 0, 2)],
+    ["Renta y amortización", fmtContabilidad(cf.ingresos_renta_y_amortizacion ?? 0, 2)],
+    ["Renta (sin PEPS)", fmtContabilidad(cf.ingresos_renta ?? 0, 2)],
+    ["Amortización", fmtContabilidad(cf.ingresos_amortizacion ?? 0, 2)],
     [
       "Gastos de operación (mismo código, fila secundaria)",
-      cf.gastos_operacion_broker ?? 0,
+      fmtContabilidad(cf.gastos_operacion_broker ?? 0, 2),
     ],
     [
       "Corrección IVA y cargo por descubierto (gasto, sin PEPS)",
-      cf.gastos_iva_correccion_descubierto ?? 0,
+      fmtContabilidad(cf.gastos_iva_correccion_descubierto ?? 0, 2),
     ],
     [
       "Impuestos y Retenciones (retención, percepción, IIGG/ganancias, BBPP/bienes personales)",
-      cf.impuestos_y_retenciones ?? 0,
+      fmtContabilidad(cf.impuestos_y_retenciones ?? 0, 2),
     ],
     [
       "Concepto a definir (sin ticker: descripción no reconocida aún)",
-      cf.concepto_a_definir ?? 0,
+      fmtContabilidad(cf.concepto_a_definir ?? 0, 2),
     ],
     [],
-    ["Resultado ejercicio (realizado ventas vs costo PEPS)", resultado.resultadoEjercicio],
+    [
+      "Resultado ejercicio (realizado ventas vs costo PEPS)",
+      fmtContabilidad(resultado.resultadoEjercicio, 2),
+    ],
     [],
   ];
 
@@ -853,9 +877,9 @@ function exportarExcelCC(resultado) {
       ? p.nombreActivo
       : "—",
     fmtFecha(p.fechaConcOrigen),
-    p.cantidad,
-    p.valorUnitario,
-    p.costoRemanente,
+    celdaCantidadExcel(p.cantidad),
+    celdaMontoExcel(p.valorUnitario, 2),
+    celdaMontoExcel(p.costoRemanente, 2),
     monedaOriginalCelda({ moneda: p.monedaOrigen }),
   ]);
 
@@ -865,10 +889,10 @@ function exportarExcelCC(resultado) {
   );
 
   const wb = XLSX.utils.book_new();
-  bookAppendAoa(wb, XLSX, resumen, "Resumen", esInviu);
-  bookAppendAoa(wb, XLSX, [cabDet, ...filasDet], "Detalle movimientos", esInviu);
-  bookAppendAoa(wb, XLSX, [cabPend, ...filasPend], "Activos en tenencia", esInviu);
-  bookAppendAoa(wb, XLSX, aoaOrigen, "Origen importado", esInviu);
+  bookAppendAoa(wb, XLSX, resumen, "Resumen");
+  bookAppendAoa(wb, XLSX, [cabDet, ...filasDet], "Detalle movimientos");
+  bookAppendAoa(wb, XLSX, [cabPend, ...filasPend], "Activos en tenencia");
+  bookAppendAoa(wb, XLSX, aoaOrigen, "Origen importado");
 
   const nombresReservados = new Set([
     "Resumen",
@@ -895,25 +919,25 @@ function exportarExcelCC(resultado) {
     }
     const aoaRubro = [
       [label],
-      ["Total importe (suma algebraica)", sumImp],
+      ["Total importe (suma algebraica)", fmtContabilidad(sumImp, 2)],
       [],
       cabDet,
       ...rows.map((d) => filaDetalleMovimientoExcel(d)),
     ];
     const nombreHoja = nombreHojaExcelUnico(label, nombresReservados);
-    bookAppendAoa(wb, XLSX, aoaRubro, nombreHoja, esInviu);
+    bookAppendAoa(wb, XLSX, aoaRubro, nombreHoja);
   }
 
   if (!porTipo.has("concepto_a_definir")) {
     const label = etiquetaRubroTipoLinea("concepto_a_definir");
     const aoaConcepto = [
       [label],
-      ["Total importe (suma algebraica)", cf.concepto_a_definir ?? 0],
+      ["Total importe (suma algebraica)", fmtContabilidad(cf.concepto_a_definir ?? 0, 2)],
       [],
       cabDet,
     ];
     const nombreHojaConcepto = nombreHojaExcelUnico(label, nombresReservados);
-    bookAppendAoa(wb, XLSX, aoaConcepto, nombreHojaConcepto, esInviu);
+    bookAppendAoa(wb, XLSX, aoaConcepto, nombreHojaConcepto);
   }
 
   const hojasAgrupadas = [
@@ -943,8 +967,7 @@ function exportarExcelCC(resultado) {
       esPeps ? filaDetalleMovimientoExcelHojaPeps : filaDetalleMovimientoExcel,
       nombresReservados,
       nombreHoja,
-      esPeps,
-      esInviu
+      esPeps
     );
   }
 
@@ -1074,21 +1097,21 @@ async function ejecutarAnalisisCC() {
   ultimoCotizacionesCC = cotMap;
 
   const cf = resultado.cashFlows;
-  $("ccIngresos").textContent = fmtNum(cf.ingresos_cuenta, 2);
-  $("ccSalidas").textContent = fmtNum(cf.salidas_cuenta, 2);
-  $("ccApcolfut").textContent = fmtNum(cf.rescate_caucion_colocadora, 2);
-  $("ccApcolcon").textContent = fmtNum(cf.suscripcion_caucion_colocadora, 2);
-  $("ccAptomcon").textContent = fmtNum(cf.pedido_caucion_tomadora ?? 0, 2);
-  $("ccAptomfut").textContent = fmtNum(cf.pagado_caucion_tomadora ?? 0, 2);
-  $("ccDivEfec").textContent = fmtNum(cf.ingresos_dividendos ?? 0, 2);
-  $("ccRentaYAmort").textContent = fmtNum(cf.ingresos_renta_y_amortizacion ?? 0, 2);
-  $("ccRenta").textContent = fmtNum(cf.ingresos_renta ?? 0, 2);
-  $("ccAmortizacion").textContent = fmtNum(cf.ingresos_amortizacion ?? 0, 2);
-  $("ccGastosOp").textContent = fmtNum(cf.gastos_operacion_broker ?? 0, 2);
-  $("ccGastosIvaDesc").textContent = fmtNum(cf.gastos_iva_correccion_descubierto ?? 0, 2);
-  $("ccImpuestosRet").textContent = fmtNum(cf.impuestos_y_retenciones ?? 0, 2);
-  $("ccConceptoDefinir").textContent = fmtNum(cf.concepto_a_definir ?? 0, 2);
-  $("ccResEjercicio").textContent = fmtNum(resultado.resultadoEjercicio, 2);
+  $("ccIngresos").textContent = fmtContabilidad(cf.ingresos_cuenta, 2);
+  $("ccSalidas").textContent = fmtContabilidad(cf.salidas_cuenta, 2);
+  $("ccApcolfut").textContent = fmtContabilidad(cf.rescate_caucion_colocadora, 2);
+  $("ccApcolcon").textContent = fmtContabilidad(cf.suscripcion_caucion_colocadora, 2);
+  $("ccAptomcon").textContent = fmtContabilidad(cf.pedido_caucion_tomadora ?? 0, 2);
+  $("ccAptomfut").textContent = fmtContabilidad(cf.pagado_caucion_tomadora ?? 0, 2);
+  $("ccDivEfec").textContent = fmtContabilidad(cf.ingresos_dividendos ?? 0, 2);
+  $("ccRentaYAmort").textContent = fmtContabilidad(cf.ingresos_renta_y_amortizacion ?? 0, 2);
+  $("ccRenta").textContent = fmtContabilidad(cf.ingresos_renta ?? 0, 2);
+  $("ccAmortizacion").textContent = fmtContabilidad(cf.ingresos_amortizacion ?? 0, 2);
+  $("ccGastosOp").textContent = fmtContabilidad(cf.gastos_operacion_broker ?? 0, 2);
+  $("ccGastosIvaDesc").textContent = fmtContabilidad(cf.gastos_iva_correccion_descubierto ?? 0, 2);
+  $("ccImpuestosRet").textContent = fmtContabilidad(cf.impuestos_y_retenciones ?? 0, 2);
+  $("ccConceptoDefinir").textContent = fmtContabilidad(cf.concepto_a_definir ?? 0, 2);
+  $("ccResEjercicio").textContent = fmtContabilidad(resultado.resultadoEjercicio, 2);
 
   const resumenMon = $("ccMonedaInformeResumen");
   if (resumenMon) {

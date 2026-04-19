@@ -1,18 +1,15 @@
 import { procesarPEPS, parsearFilasExcel } from "./fifo-engine.js";
+import {
+  fmtContabilidad,
+  celdaCantidadExcel,
+  celdaMontoExcel,
+} from "./formato-contabilidad.js";
 
 const $ = (id) => document.getElementById(id);
 
 let ultimoResultado = null;
 let ultimoNombreArchivo = "analisis_fci_procesado.xlsx";
 let ultimasFilasExcel = null;
-
-function fmtNum(n, dec = 4) {
-  if (n == null || !Number.isFinite(n)) return "—";
-  return n.toLocaleString("es-AR", {
-    minimumFractionDigits: dec,
-    maximumFractionDigits: dec,
-  });
-}
 
 function fmtFecha(d) {
   if (d == null) return "—";
@@ -145,10 +142,13 @@ function exportarExcel(resultado, operacionesOriginales) {
   const resumen = [
     ["Análisis de FCI — PEPS (FIFO)"],
     [],
-    ["Resultado del ejercicio", resultado.resultadoEjercicio],
-    ["Cuotas parte al cierre", resultado.cuotasCierre],
-    ["Valor unitario al cierre (costo PEPS)", resultado.valorUnitarioCierre],
-    ["Costo remanente en cartera", resultado.costoRemanente],
+    ["Resultado del ejercicio", fmtContabilidad(resultado.resultadoEjercicio, 2)],
+    ["Cuotas parte al cierre", fmtContabilidad(resultado.cuotasCierre, 6)],
+    [
+      "Valor unitario al cierre (costo PEPS)",
+      fmtContabilidad(resultado.valorUnitarioCierre, 6),
+    ],
+    ["Costo remanente en cartera", celdaMontoExcel(resultado.costoRemanente, 2)],
     [],
   ];
 
@@ -165,19 +165,19 @@ function exportarExcel(resultado, operacionesOriginales) {
   const filasDet = det.map((d) => [
     fmtFecha(d.fecha),
     d.tipo,
-    d.cuotasParte,
-    d.monto,
-    d.costoPeps,
-    d.resultadoParcial,
-    d.saldoCuotasParte,
+    celdaCantidadExcel(d.cuotasParte),
+    celdaMontoExcel(d.monto, 2),
+    celdaMontoExcel(d.costoPeps, 2),
+    celdaMontoExcel(d.resultadoParcial, 2),
+    celdaCantidadExcel(d.saldoCuotasParte),
   ]);
 
   const cabOps = ["Fecha", "Tipo", "Cuotas", "Monto"];
   const filasOps = operacionesOriginales.map((o) => [
     fmtFecha(o.fecha),
     o.tipo === "suscripcion" ? "Suscripción" : "Rescate",
-    o.cuotas,
-    o.monto,
+    celdaCantidadExcel(o.cuotas),
+    celdaMontoExcel(o.monto, 2),
   ]);
 
   const pend = resultado.lotesPendientes || [];
@@ -190,9 +190,9 @@ function exportarExcel(resultado, operacionesOriginales) {
   ];
   const filasPend = pend.map((p) => [
     fmtFecha(p.fecha),
-    p.cuotasParte,
-    p.valorUnitario,
-    p.costoRemanente,
+    celdaCantidadExcel(p.cuotasParte),
+    celdaMontoExcel(p.valorUnitario, 2),
+    celdaMontoExcel(p.costoRemanente, 2),
     p.origen === "inicial" ? "Lote inicial" : "Suscripción (Excel)",
   ]);
 
@@ -262,13 +262,12 @@ function ejecutarAnalisis(filasExcel) {
 
   ultimoResultado = { resultado, operaciones };
 
-  const signo = resultado.resultadoEjercicio >= 0 ? "Ganancia" : "Pérdida";
-  $("resEjercicio").textContent = `${signo}: ${fmtNum(Math.abs(resultado.resultadoEjercicio), 2)}`;
+  $("resEjercicio").textContent = fmtContabilidad(resultado.resultadoEjercicio, 2);
   $("resEjercicio").className =
     resultado.resultadoEjercicio >= 0 ? "valor ok" : "valor loss";
 
-  $("resCuotas").textContent = fmtNum(resultado.cuotasCierre, 6);
-  $("resVU").textContent = fmtNum(resultado.valorUnitarioCierre, 6);
+  $("resCuotas").textContent = fmtContabilidad(resultado.cuotasCierre, 6);
+  $("resVU").textContent = fmtContabilidad(resultado.valorUnitarioCierre, 6);
 
   $("panelResultados").hidden = false;
   $("btnExportar").disabled = false;
