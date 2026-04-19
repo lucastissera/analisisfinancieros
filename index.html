@@ -162,30 +162,9 @@
         <section class="card">
           <h2>Movimientos del período</h2>
           <p class="hint">
-            Elegí el <strong>broker del extracto</strong> antes de la moneda del informe.
-            Para <strong>Balanz</strong>, <strong>Inviu</strong>, <strong>PPI (Portfolio Personal)</strong> y <strong>Conej</strong> la primera fila define columnas por nombre
-            (orden libre, con o sin tildes); si no se reconocen los encabezados obligatorios, se usa el formato fijo A–I.
-            Solo <strong>Inviu</strong>: columna «Operación», ticker en descripción «TICKER | …» si no hay columna ticker,
-            reglas CC/CT para caución.
-            Solo <strong>PPI</strong>: sin columna «Operación»; en «Descripción» figuran el ticker, COMPRA/VENTA, ingreso o retiro de fondos, renta, amortización, dividendo en efectivo y retenciones (incl. Ret. Bs.Ps / Ret Gcias).
-            Si el archivo viene <strong>solo con filas de movimientos</strong> (sin títulos en la primera fila) y 5 columnas típicas (fecha, descripción, cantidad, precio, importe), el sistema las alinea como extracto PPI corto.
-            <strong>Inviu</strong> y <strong>PPI</strong>: el tipo de instrumento se deduce del texto en «Descripción» y del ticker como respaldo (misma lógica de inferencia); el extracto suele no traer columna de tipo utilizable.
-            Los CEDEARs y demás tickers pueden venir intercalados: se agrupa por
-            ticker, se ordena por fecha (las filas con fechas anteriores van
-            primero aunque estén más abajo en el archivo) y el mismo día las
-            compras se procesan antes que las ventas aunque la venta esté en una
-            fila superior a la compra.
-            Sin ticker, se clasifica por palabras en Descripción (Cobro,
-            Pago, APCOLFUT, APCOLCON, APTOMCON, APTOMFUT). Con ticker y cantidad 0, si la descripción
-            indica Renta, Dividendo en efectivo, Renta y Amortización o solo Amortización, se suma el
-            importe en el concepto correspondiente sin afectar PEPS. Si el tipo es
-            «Corporativos», entra al PEPS cuando la descripción indica compra/venta,
-            oferta de canje u oferta temprana de canje (cantidad ≠ 0); si solo es
-            renta o amortización, va al resumen de ingresos por título.
-            Las filas en distintas monedas (pesos, dólares, dólares C.V. 7000) se
-            homogeneizan al importar según la moneda del informe y cotizaciones del día
-            de concertación, salvo que elijas «Origen del archivo»: en ese caso no se
-            aplica tipo de cambio y los totales pueden mezclar monedas (ver nota en resultados).
+            Elegí el broker del extracto antes de la moneda del informe. En caso de
+            haber discrepancias en las tenencias respecto al análisis PEPS/FIFO, se
+            informará en pantalla.
           </p>
           <div class="actions cc-movs-actions">
             <div class="field cc-broker-field">
@@ -211,6 +190,9 @@
             </button>
             <button type="button" class="btn-secondary" id="btnExportarCC" disabled>
               Exportar procesado
+            </button>
+            <button type="button" class="btn-secondary" id="btnExportarPdfCC" disabled>
+              Exportar PDF
             </button>
           </div>
           <p id="ccFxCargando" class="hint cc-fx-cargando" hidden>
@@ -329,6 +311,8 @@
     </div>
 
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.4/jspdf.plugin.autotable.min.js"></script>
     <script type="module" src="./auth.js"></script>
     <script type="module" src="./app.js"></script>
     <script type="module" src="./cc-app.js"></script>

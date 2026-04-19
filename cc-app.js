@@ -47,6 +47,13 @@ let ultimoCotizacionesCC = null;
 
 let ccAnalisisEnCurso = false;
 
+function setBotonesExportarCc(disabled) {
+  const ex = $("btnExportarCC");
+  const pdf = $("btnExportarPdfCC");
+  if (ex) ex.disabled = disabled;
+  if (pdf) pdf.disabled = disabled;
+}
+
 function etiquetaMonedaInforme(v) {
   if (v === "ORIGEN") return "Origen del archivo (sin conversión)";
   if (v === "USD") return "Dólares (USD)";
@@ -814,9 +821,7 @@ function movimientosAgrupadosPorClase(detalle, clase) {
   return ordenarDetalleMovs(rows);
 }
 
-function appendHojaAgrupadaClase(
-  wb,
-  XLSX,
+function datosAoaHojaAgrupadaClase(
   tituloFila,
   cabCabecera,
   rows,
@@ -846,12 +851,14 @@ function appendHojaAgrupadaClase(
     nombreHojaSheet != null ? nombreHojaSheet : tituloFila,
     nombresReservados
   );
-  const ws = sheetDesdeAoaConEstilo(XLSX, aoa);
-  XLSX.utils.book_append_sheet(wb, ws, nombre);
+  return { nombre, aoa };
 }
 
-function exportarExcelCC(resultado) {
-  const XLSX = window.XLSX;
+/**
+ * Misma estructura que el Excel exportado: orden y contenido de hojas.
+ * @returns {{ hojas: Array<{ nombre: string, aoa: any[][] }>, baseName: string }}
+ */
+function construirHojasExportacionCC(resultado) {
   const cf = resultado.cashFlows;
   let nComprasDet = 0;
   let nVentasDet = 0;
@@ -997,11 +1004,18 @@ function exportarExcelCC(resultado) {
     ultimoMonedaInforme
   );
 
-  const wb = XLSX.utils.book_new();
-  bookAppendAoa(wb, XLSX, resumen, "Resumen");
-  bookAppendAoa(wb, XLSX, [cabDet, ...filasDet], "Detalle movimientos");
-  bookAppendAoa(wb, XLSX, [cabPend, ...filasPend], "Activos en tenencia");
-  bookAppendAoa(wb, XLSX, aoaOrigen, "Origen importado");
+  /** @type {Array<{ nombre: string, aoa: any[][] }>} */
+  const hojas = [];
+  hojas.push({ nombre: "Resumen", aoa: resumen });
+  hojas.push({
+    nombre: "Detalle movimientos",
+    aoa: [cabDet, ...filasDet],
+  });
+  hojas.push({
+    nombre: "Activos en tenencia",
+    aoa: [cabPend, ...filasPend],
+  });
+  hojas.push({ nombre: "Origen importado", aoa: aoaOrigen });
 
   const nombresReservados = new Set([
     "Resumen",
@@ -1034,7 +1048,7 @@ function exportarExcelCC(resultado) {
       ...rows.map((d) => filaDetalleMovimientoExcel(d)),
     ];
     const nombreHoja = nombreHojaExcelUnico(label, nombresReservados);
-    bookAppendAoa(wb, XLSX, aoaRubro, nombreHoja);
+    hojas.push({ nombre: nombreHoja, aoa: aoaRubro });
   }
 
   if (!porTipo.has("concepto_a_definir")) {
@@ -1046,7 +1060,7 @@ function exportarExcelCC(resultado) {
       cabDet,
     ];
     const nombreHojaConcepto = nombreHojaExcelUnico(label, nombresReservados);
-    bookAppendAoa(wb, XLSX, aoaConcepto, nombreHojaConcepto);
+    hojas.push({ nombre: nombreHojaConcepto, aoa: aoaConcepto });
   }
 
   const hojasAgrupadas = [
@@ -1069,9 +1083,7 @@ function exportarExcelCC(resultado) {
   for (const [titulo, clase, nombreHoja] of hojasAgrupadas) {
     const rowsAgr = movimientosAgrupadosPorClase(resultado.detalleMovs, clase);
     const esPeps = clase.startsWith("peps_");
-    appendHojaAgrupadaClase(
-      wb,
-      XLSX,
+    const { nombre, aoa } = datosAoaHojaAgrupadaClase(
       titulo,
       esPeps ? cabDetPeps : cabDet,
       rowsAgr,
@@ -1080,10 +1092,86 @@ function exportarExcelCC(resultado) {
       nombreHoja,
       esPeps
     );
+    hojas.push({ nombre, aoa });
   }
 
   const base = ultimoNombreMovs.replace(/\.[^.]+$/, "");
-  XLSX.writeFile(wb, `${base}_cc_procesado.xlsx`);
+  return { hojas, baseName: base };
+}
+
+function exportarExcelCC(resultado) {
+  const XLSX = window.XLSX;
+  if (!XLSX) throw new Error("No se cargó la librería XLSX.");
+  const { hojas, baseName } = construirHojasExportacionCC(resultado);
+  const wb = XLSX.utils.book_new();
+  for (const { nombre, aoa } of hojas) {
+    bookAppendAoa(wb, XLSX, aoa, nombre);
+  }
+  XLSX.writeFile(wb, `${baseName}_cc_procesado.xlsx`);
+}
+
+/** Normaliza filas a matriz rectangular (strings) para jsPDF-AutoTable. */
+function aoaParaPdfBody(aoa) {
+  let maxC = 0;
+  for (const row of aoa) {
+    const len = row ? row.length : 0;
+    if (len > maxC) maxC = len;
+  }
+  return aoa.map((row) => {
+    const r = row || [];
+    const out = [];
+    for (let c = 0; c < maxC; c++) {
+      const v = r[c];
+      out.push(v == null ? "" : String(v));
+    }
+    return out;
+  });
+}
+
+function exportarPdfCC(resultado) {
+  const jspdf = window.jspdf;
+  if (!jspdf?.jsPDF) {
+    throw new Error("No se cargó la librería jsPDF.");
+  }
+  const { jsPDF } = jspdf;
+  const { hojas, baseName } = construirHojasExportacionCC(resultado);
+  const doc = new jsPDF({
+    orientation: "landscape",
+    unit: "mm",
+    format: "a4",
+  });
+  if (typeof doc.autoTable !== "function") {
+    throw new Error(
+      "No se cargó jspdf-autotable. Revisá el orden de los scripts en index.html (después de jsPDF)."
+    );
+  }
+  const pageW = doc.internal.pageSize.getWidth();
+  const margin = 8;
+  let first = true;
+  for (const { nombre, aoa } of hojas) {
+    if (!first) doc.addPage();
+    first = false;
+    doc.setFontSize(11);
+    doc.setTextColor(40, 50, 70);
+    const titulo =
+      nombre.length > 90 ? `${nombre.slice(0, 87)}...` : nombre;
+    doc.text(titulo, margin, 12);
+    const body = aoaParaPdfBody(aoa);
+    doc.autoTable({
+      startY: 16,
+      body,
+      styles: {
+        fontSize: 5,
+        cellPadding: 0.8,
+        overflow: "linebreak",
+        minCellHeight: 3,
+      },
+      margin: { left: margin, right: margin },
+      tableWidth: pageW - 2 * margin,
+      theme: "striped",
+    });
+  }
+  doc.save(`${baseName}_cc_procesado.pdf`);
 }
 
 async function ejecutarAnalisisCC() {
@@ -1100,7 +1188,7 @@ async function ejecutarAnalisisCC() {
   } catch (e) {
     mostrarErrorCC(e.message || String(e));
     $("ccPanelResultados").hidden = true;
-    $("btnExportarCC").disabled = true;
+    setBotonesExportarCc(true);
     ccAnalisisEnCurso = false;
     return;
   }
@@ -1110,7 +1198,7 @@ async function ejecutarAnalisisCC() {
   if (!filasMovs?.filasDatos?.length) {
     mostrarErrorCC(mensajeImportarMovsPendiente());
     $("ccPanelResultados").hidden = true;
-    $("btnExportarCC").disabled = true;
+    setBotonesExportarCc(true);
     ccAnalisisEnCurso = false;
     return;
   }
@@ -1128,7 +1216,7 @@ async function ejecutarAnalisisCC() {
   } catch (e) {
     mostrarErrorCC(e.message || String(e));
     $("ccPanelResultados").hidden = true;
-    $("btnExportarCC").disabled = true;
+    setBotonesExportarCc(true);
     ccAnalisisEnCurso = false;
     return;
   }
@@ -1146,7 +1234,7 @@ async function ejecutarAnalisisCC() {
     } catch (e) {
       mostrarErrorCC(e.message || String(e));
       $("ccPanelResultados").hidden = true;
-      $("btnExportarCC").disabled = true;
+      setBotonesExportarCc(true);
       ccAnalisisEnCurso = false;
       return;
     }
@@ -1163,7 +1251,7 @@ async function ejecutarAnalisisCC() {
   if (fechasIso.some((f) => !f)) {
     mostrarErrorCC("Hay movimientos con fecha de concertación inválida.");
     $("ccPanelResultados").hidden = true;
-    $("btnExportarCC").disabled = true;
+    setBotonesExportarCc(true);
     ccAnalisisEnCurso = false;
     return;
   }
@@ -1179,7 +1267,7 @@ async function ejecutarAnalisisCC() {
     } catch (e) {
       mostrarErrorCC(e.message || String(e));
       $("ccPanelResultados").hidden = true;
-      $("btnExportarCC").disabled = true;
+      setBotonesExportarCc(true);
       elCargando.hidden = true;
       btnImport.disabled = false;
       selMoneda.disabled = false;
@@ -1200,7 +1288,7 @@ async function ejecutarAnalisisCC() {
   } catch (e) {
     mostrarErrorCC(e.message || String(e));
     $("ccPanelResultados").hidden = true;
-    $("btnExportarCC").disabled = true;
+    setBotonesExportarCc(true);
     ccAnalisisEnCurso = false;
     return;
   }
@@ -1211,7 +1299,7 @@ async function ejecutarAnalisisCC() {
   } catch (e) {
     mostrarErrorCC(e.message || String(e));
     $("ccPanelResultados").hidden = true;
-    $("btnExportarCC").disabled = true;
+    setBotonesExportarCc(true);
     ccAnalisisEnCurso = false;
     return;
   }
@@ -1259,7 +1347,7 @@ async function ejecutarAnalisisCC() {
   }
 
   $("ccPanelResultados").hidden = false;
-  $("btnExportarCC").disabled = false;
+  setBotonesExportarCc(false);
   ccAnalisisEnCurso = false;
 }
 
@@ -1371,13 +1459,26 @@ $("fileMovsCC").addEventListener("change", async (ev) => {
   } catch (e) {
     mostrarErrorCC(e.message || String(e));
     $("ccPanelResultados").hidden = true;
-    $("btnExportarCC").disabled = true;
+    setBotonesExportarCc(true);
   }
 });
 
 $("btnExportarCC").addEventListener("click", () => {
   if (!ultimoResultadoCC) return;
-  exportarExcelCC(ultimoResultadoCC);
+  try {
+    exportarExcelCC(ultimoResultadoCC);
+  } catch (e) {
+    mostrarErrorCC(e.message || String(e));
+  }
+});
+
+$("btnExportarPdfCC").addEventListener("click", () => {
+  if (!ultimoResultadoCC) return;
+  try {
+    exportarPdfCC(ultimoResultadoCC);
+  } catch (e) {
+    mostrarErrorCC(e.message || String(e));
+  }
 });
 
 bindNavigation();
