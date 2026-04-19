@@ -1128,12 +1128,20 @@ function aoaParaPdfBody(aoa) {
   });
 }
 
+function obtenerConstructorJsPDF() {
+  const w = typeof window !== "undefined" ? window : globalThis;
+  if (w.jspdf && typeof w.jspdf.jsPDF === "function") return w.jspdf.jsPDF;
+  if (typeof w.jsPDF === "function") return w.jsPDF;
+  return null;
+}
+
 function exportarPdfCC(resultado) {
-  const jspdf = window.jspdf;
-  if (!jspdf?.jsPDF) {
-    throw new Error("No se cargó la librería jsPDF.");
+  const jsPDF = obtenerConstructorJsPDF();
+  if (!jsPDF) {
+    throw new Error(
+      "No se cargó la librería jsPDF. Revisá la conexión o que index.html incluya el script de jsPDF antes de cc-app.js."
+    );
   }
-  const { jsPDF } = jspdf;
   const { hojas, baseName } = construirHojasExportacionCC(resultado);
   const doc = new jsPDF({
     orientation: "landscape",
