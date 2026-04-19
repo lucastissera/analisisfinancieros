@@ -1,5 +1,6 @@
 /**
  * Formato contabilidad es-AR: miles con punto, decimales con coma, negativos entre paréntesis.
+ * Usar para montos, precios y cantidades en pantalla y en Excel exportado (como texto en celda).
  * @param {number} n
  * @param {number} [dec=2]
  * @returns {string}
@@ -37,6 +38,12 @@ export function celdaMontoExcel(n, dec = 2) {
   return fmtContabilidad(n, dec);
 }
 
+/** Precio unitario (más decimales habituales en operaciones). */
+export function celdaPrecioExcel(n, dec = 4) {
+  return celdaMontoExcel(n, dec);
+}
+
+/** Nominales / cantidad: mismo criterio contable que fmtContabilidad, hasta 6 decimales. */
 export function celdaCantidadExcel(n) {
   if (n == null || !Number.isFinite(n)) return "";
   return fmtCantidadActivos(n);

@@ -28,6 +28,7 @@ import { inferirTipoActivoArgentinorSync } from "./cc-instrumentos-arg.js";
 import {
   fmtContabilidad,
   celdaMontoExcel,
+  celdaPrecioExcel,
   celdaCantidadExcel,
 } from "./formato-contabilidad.js";
 
@@ -324,14 +325,14 @@ function formatearFilaOrigenNumerica(wide, mapa) {
     const n = aNum(out[idx]);
     if (n != null) out[idx] = celdaCantidadExcel(n);
   };
-  const applyMonto = (idx) => {
+  const applyMonto = (idx, dec = 2) => {
     if (idx < 0 || idx >= out.length) return;
     const n = aNum(out[idx]);
-    if (n != null) out[idx] = celdaMontoExcel(n, 2);
+    if (n != null) out[idx] = celdaMontoExcel(n, dec);
   };
   applyCant(mapa.cantidad);
-  applyMonto(mapa.precio);
-  applyMonto(mapa.importe);
+  applyMonto(mapa.precio, 4);
+  applyMonto(mapa.importe, 2);
   return out;
 }
 
@@ -460,7 +461,7 @@ function filaDetalleMovimientoExcel(d) {
     d.descripcion,
     d.tipoLinea,
     celdaCantidadExcel(d.cantidad),
-    celdaMontoExcel(d.precio, 2),
+    celdaPrecioExcel(d.precio, 4),
     celdaMontoExcel(d.importe, 2),
     monedaOriginalCelda(d),
     d.peps?.resultado != null && Number.isFinite(d.peps.resultado)
@@ -797,6 +798,14 @@ function appendHojaAgrupadaClase(
 function exportarExcelCC(resultado) {
   const XLSX = window.XLSX;
   const cf = resultado.cashFlows;
+  let nComprasDet = 0;
+  let nVentasDet = 0;
+  let nCompraSinCantDet = 0;
+  for (const d of resultado.detalleMovs || []) {
+    if (d.tipoLinea === "compra") nComprasDet++;
+    else if (d.tipoLinea === "venta") nVentasDet++;
+    else if (d.tipoLinea === "compra_sin_cantidad") nCompraSinCantDet++;
+  }
   const brokerFlexTicker = esBrokerInferenciaInviuOPpi(ultimoBrokerMovsCC);
   const etiquetaColTickerDetalle = brokerFlexTicker
     ? "Ticker (PEPS)"
@@ -845,6 +854,21 @@ function exportarExcelCC(resultado) {
     [
       "Concepto a definir (sin ticker: descripción no reconocida aún)",
       fmtContabilidad(cf.concepto_a_definir ?? 0, 2),
+    ],
+    [],
+    ["Líneas detalle — compras (tipo PEPS compra)", String(nComprasDet)],
+    ["Líneas detalle — ventas (tipo PEPS venta)", String(nVentasDet)],
+    ...(nCompraSinCantDet > 0
+      ? [
+          [
+            "Líneas detalle — compra sin cantidad (PEPS)",
+            String(nCompraSinCantDet),
+          ],
+        ]
+      : []),
+    [
+      "Nota compras/ventas vs hojas por rubro",
+      "Las hojas Acciones, CEDEARs, Bonos, etc. filtran por clase de instrumento y reglas de exclusión; el conteo completo de operaciones compra/venta del motor está en «Detalle movimientos» y en las cifras anteriores.",
     ],
     [],
     [
