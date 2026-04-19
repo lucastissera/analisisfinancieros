@@ -23,8 +23,11 @@ function actualizarBotonLogin() {
 }
 
 function mostrarApp() {
-  $("view-login").hidden = true;
-  $("app-shell").hidden = false;
+  const login = $("view-login");
+  const app = $("app-shell");
+  if (!login || !app) return;
+  login.hidden = true;
+  app.hidden = false;
 }
 
 function intentarLogin() {

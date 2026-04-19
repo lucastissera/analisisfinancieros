@@ -34,6 +34,11 @@ body {
   justify-content: center;
 }
 
+/* El atributo hidden debe ganar a display:flex de .login-shell (sin esto el recuadro puede seguir visible). */
+#view-login[hidden] {
+  display: none !important;
+}
+
 .login-card {
   width: 100%;
 }
