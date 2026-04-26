@@ -179,7 +179,42 @@ body {
 main {
   max-width: 720px;
   margin: 0 auto;
-  padding: 2rem max(1.25rem, calc(0.75rem + 2.75rem + 0.5rem)) 3rem 1.25rem;
+  padding: 2rem max(1.25rem, calc(0.75rem + 2.75rem + 0.5rem)) 1.5rem 1.25rem;
+}
+
+.fci-archivo-moneda {
+  margin-bottom: 0.75rem;
+}
+
+.fci-moneda-field {
+  max-width: 22rem;
+}
+
+.fci-moneda-field label {
+  display: block;
+  font-size: 0.9rem;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+.fci-moneda-field select {
+  width: 100%;
+  padding: 0.5rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--input-bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.fci-moneda-hint {
+  margin-top: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+
+.fci-import-actions {
+  position: relative;
+  z-index: 2;
 }
 
 h1 {
@@ -451,13 +486,19 @@ button:disabled {
   border-color: rgba(248, 113, 113, 0.45);
 }
 
+/* Flujo en documento: no tapa botones fijos al pie en distintas resoluciones */
 .app-footer {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  z-index: 50;
+  position: relative;
+  z-index: 0;
+  margin-top: 2.5rem;
   padding: 0.5rem 1rem 0.75rem;
   max-width: min(100%, 34rem);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+#app-shell {
+  padding-bottom: 2.5rem;
 }
 
 .app-footer p {

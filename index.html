@@ -113,9 +113,27 @@
           </p>
         </section>
 
-        <section class="card">
+        <section class="card" id="fciCardArchivo">
           <h2>Archivo</h2>
-          <div class="actions">
+          <div class="fci-archivo-moneda">
+            <div class="field fci-moneda-field">
+              <label for="fciMonedaFondo">Moneda del FCI (movimientos del Excel)</label>
+              <select id="fciMonedaFondo">
+                <option value="ARS" selected>
+                  Pesos (ARS) — tal como en el archivo
+                </option>
+                <option value="USD">
+                  Dólares (USD) — convertir a ARS con BNA por fecha
+                </option>
+              </select>
+            </div>
+          </div>
+          <p class="hint fci-moneda-hint" id="fciMonedaHint" hidden>
+            Dólares: suscripciones al tipo vendedor BNA; rescates al comprador. Se
+            requiere conexión para cotizaciones (Bluelytics / BNA). Lotes iniciales
+            en USD se convierten con el vendedor de la fecha del lote.
+          </p>
+          <div class="actions fci-import-actions">
             <button type="button" class="btn-primary" id="btnImportar">
               Importar Excel
             </button>

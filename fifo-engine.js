@@ -3,6 +3,8 @@
  * Lotes: { qty, totalCost } — costo histórico acumulado por lote.
  */
 
+import { redondearA, redondearCuotasFci } from "./formato-contabilidad.js";
+
 function normalizeTipo(raw) {
   if (raw == null) return null;
   const s = String(raw).trim().toLowerCase();
@@ -62,8 +64,8 @@ export function procesarPEPS(inicial, operaciones) {
     : [];
   for (let i = 0; i < lotesIni.length; i++) {
     const li = lotesIni[i];
-    const cuotas = Number(li.cuotas);
-    const vu = Number(li.valorUnitario);
+    const cuotas = redondearCuotasFci(Number(li.cuotas));
+    const vu = redondearA(Number(li.valorUnitario), 6);
     if (!Number.isFinite(cuotas) || cuotas <= 0) continue;
     if (!Number.isFinite(vu) || vu < 0) {
       throw new Error(
@@ -74,7 +76,8 @@ export function procesarPEPS(inicial, operaciones) {
     if (!fd || !(fd instanceof Date) || Number.isNaN(fd.getTime())) {
       throw new Error(`Lote inicial #${i + 1}: fecha inválida.`);
     }
-    crearLote(cuotas, cuotas * vu, {
+    const montoLote = redondearA(cuotas * vu, 2);
+    crearLote(cuotas, montoLote, {
       fecha: fd,
       origen: "inicial",
       filaExcel: null,
@@ -89,8 +92,8 @@ export function procesarPEPS(inicial, operaciones) {
     const fila = op.filaExcel ?? i + 2;
 
     if (op.tipo === "suscripcion") {
-      const qty = op.cuotas;
-      const monto = op.monto;
+      const qty = redondearCuotasFci(op.cuotas);
+      const monto = redondearA(op.monto, 2);
       if (qty <= 0) {
         throw new Error(`Fila ${fila} (Excel): suscripción con cuotas inválidas.`);
       }
@@ -106,26 +109,32 @@ export function procesarPEPS(inicial, operaciones) {
     }
 
     if (op.tipo === "rescate") {
-      const qtyToSell = op.cuotas;
-      const proceeds = op.monto;
+      const qtyToSell = redondearCuotasFci(op.cuotas);
+      const proceeds = redondearA(op.monto, 2);
       if (qtyToSell <= 0) {
         throw new Error(`Fila ${fila} (Excel): rescate con cuotas inválidas.`);
       }
 
+      const epsC = 1e-7;
       let remaining = qtyToSell;
 
-      while (remaining > 1e-9 && lots.length > 0) {
+      while (redondearCuotasFci(remaining) > 1e-5 && lots.length > 0) {
         const lot = lots[0];
-        const take = Math.min(lot.qty, remaining);
-        const costFromLot = lot.totalCost * (take / lot.qty);
-        const proceedsChunk = proceeds * (take / qtyToSell);
-        const realizadoChunk = proceedsChunk - costFromLot;
+        const take = redondearCuotasFci(Math.min(lot.qty, remaining));
+        if (take <= 0) {
+          if (redondearCuotasFci(lot.qty) <= 1e-8) lots.shift();
+          else break;
+          continue;
+        }
+        const costFromLot = redondearA(lot.totalCost * (take / lot.qty), 2);
+        const proceedsChunk = redondearA(proceeds * (take / qtyToSell), 2);
+        const realizadoChunk = redondearA(proceedsChunk - costFromLot, 2);
 
-        resultadoEjercicio += realizadoChunk;
+        resultadoEjercicio = redondearA(resultadoEjercicio + realizadoChunk, 2);
 
-        lot.qty -= take;
-        lot.totalCost -= costFromLot;
-        const saldoLote = lot.qty < 1e-9 ? 0 : lot.qty;
+        lot.qty = redondearCuotasFci(lot.qty - take);
+        lot.totalCost = redondearA(lot.totalCost - costFromLot, 2);
+        const saldoLote = lot.qty < epsC ? 0 : lot.qty;
 
         if (!rescatesPorLote.has(lot.lotId)) rescatesPorLote.set(lot.lotId, []);
         rescatesPorLote.get(lot.lotId).push({
@@ -138,11 +147,12 @@ export function procesarPEPS(inicial, operaciones) {
           saldoCuotasParte: saldoLote,
         });
 
-        remaining -= take;
-        if (lot.qty < 1e-9) lots.shift();
+        remaining = redondearCuotasFci(remaining - take);
+        if (lot.qty < epsC) lots.shift();
       }
 
-      if (remaining > 1e-6) {
+      /* Tolerancia por redondeo de cuotas a 8 decimales y restas en cola PEPS. */
+      if (redondearCuotasFci(remaining) > 1e-4) {
         throw new Error(
           `Fila ${fila} (Excel): rescate de ${qtyToSell} cuotas supera las disponibles en cartera (PEPS).`
         );
@@ -150,9 +160,15 @@ export function procesarPEPS(inicial, operaciones) {
     }
   }
 
-  const cuotasCierre = lots.reduce((s, l) => s + l.qty, 0);
-  const costoCierre = lots.reduce((s, l) => s + l.totalCost, 0);
-  const valorUnitarioCierre = cuotasCierre > 1e-9 ? costoCierre / cuotasCierre : 0;
+  const cuotasCierre = redondearCuotasFci(
+    lots.reduce((s, l) => s + l.qty, 0)
+  );
+  const costoCierre = redondearA(
+    lots.reduce((s, l) => s + l.totalCost, 0),
+    2
+  );
+  const valorUnitarioCierre =
+    cuotasCierre > 1e-8 ? redondearA(costoCierre / cuotasCierre, 6) : 0;
 
   const detallePepsPorLote = construirDetallePepsPorLote(
     lotMetaById,
@@ -162,7 +178,7 @@ export function procesarPEPS(inicial, operaciones) {
   const lotesPendientes = construirLotesPendientes(lots, lotMetaById);
 
   return {
-    resultadoEjercicio,
+    resultadoEjercicio: redondearA(resultadoEjercicio, 2),
     cuotasCierre,
     valorUnitarioCierre,
     costoRemanente: costoCierre,
@@ -178,13 +194,14 @@ export function procesarPEPS(inicial, operaciones) {
 function construirLotesPendientes(lotsCola, lotMetaById) {
   return lotsCola.map((l) => {
     const meta = lotMetaById.get(l.lotId);
-    const vu =
-      l.qty > 1e-12 ? l.totalCost / l.qty : 0;
+    const q = redondearCuotasFci(l.qty);
+    const tr = redondearA(l.totalCost, 2);
+    const vu = q > 1e-8 ? redondearA(tr / q, 6) : 0;
     return {
       fecha: meta?.fecha ?? null,
-      cuotasParte: l.qty,
+      cuotasParte: q,
       valorUnitario: vu,
-      costoRemanente: l.totalCost,
+      costoRemanente: tr,
       origen: meta?.origen ?? "suscripcion",
     };
   });
@@ -281,17 +298,19 @@ export function parsearFilasExcel(filas) {
       throw new Error(`Fila ${r + 2}: fecha inválida (columna A).`);
     }
 
-    const cuotas = normalizeCuotas(tipo, cuotasRaw);
-    if (cuotas == null || cuotas <= 0) {
+    const cuotasN = normalizeCuotas(tipo, cuotasRaw);
+    if (cuotasN == null || cuotasN <= 0) {
       throw new Error(`Fila ${r + 2}: cantidad de cuotas inválida (columna C).`);
     }
 
-    const monto = normalizeMonto(montoRaw);
-    if (monto == null || monto < 0) {
+    const montoN = normalizeMonto(montoRaw);
+    if (montoN == null || montoN < 0) {
       throw new Error(`Fila ${r + 2}: monto inválido (columna D).`);
     }
 
-    ops.push({ fecha, tipo, cuotas, monto, filaExcel: r + 2 });
+    const cuotasR = redondearCuotasFci(cuotasN);
+    const montoR = redondearA(montoN, 2);
+    ops.push({ fecha, tipo, cuotas: cuotasR, monto: montoR, filaExcel: r + 2 });
   }
 
   ops.sort((a, b) => {
@@ -309,15 +328,8 @@ function excelUtcMedianocheACalendarioLocal(d) {
 function excelDateToDate(v) {
   if (v instanceof Date && !Number.isNaN(v.getTime())) {
     const d = v;
-    if (
-      d.getUTCHours() === 0 &&
-      d.getUTCMinutes() === 0 &&
-      d.getUTCSeconds() === 0 &&
-      d.getUTCMilliseconds() === 0
-    ) {
-      return excelUtcMedianocheACalendarioLocal(d);
-    }
-    return d;
+    /* Día calendario local: evita desfasajes UTC vs hoja o serial Excel. */
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
   }
   if (typeof v === "number" && v > 20000 && v < 60000) {
     const diaEntero = Math.floor(v);
@@ -344,7 +356,13 @@ function excelDateToDate(v) {
     return new Date(y, mo - 1, d);
   }
   const parsed = new Date(s);
-  if (!Number.isNaN(parsed.getTime())) return parsed;
+  if (!Number.isNaN(parsed.getTime())) {
+    return new Date(
+      parsed.getFullYear(),
+      parsed.getMonth(),
+      parsed.getDate()
+    );
+  }
   return null;
 }
 

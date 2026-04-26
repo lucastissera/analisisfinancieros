@@ -1,4 +1,20 @@
 /**
+ * @param {number} n
+ * @param {number} dec
+ * @returns {number}
+ */
+export function redondearA(n, dec) {
+  if (n == null || !Number.isFinite(n)) return n;
+  const f = 10 ** dec;
+  return Math.round(n * f) / f;
+}
+
+/** Redondeo estándar para cuotas FCI (evita error numérico en PEPS). */
+export function redondearCuotasFci(n) {
+  return redondearA(n, 8);
+}
+
+/**
  * Formato contabilidad es-AR: miles con punto, decimales con coma, negativos entre paréntesis.
  * Usar para montos, precios y cantidades en pantalla y en Excel exportado (como texto en celda).
  * @param {number} n

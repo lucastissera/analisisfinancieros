@@ -1,15 +1,17 @@
 import { procesarPEPS, parsearFilasExcel } from "./fifo-engine.js";
-import {
-  fmtContabilidad,
-  celdaCantidadExcel,
-  celdaMontoExcel,
-} from "./formato-contabilidad.js";
+import { fmtContabilidad } from "./formato-contabilidad.js";
+import { redondearA } from "./formato-contabilidad.js";
+import { fechaIsoLocal } from "./cc-fx.js";
+import { obtenerCotizacionesPorFechas } from "./cc-fx-rates.js";
+import { generarWorkbookFciProcesado } from "./fci-excel.js";
 
 const $ = (id) => document.getElementById(id);
 
 let ultimoResultado = null;
 let ultimoNombreArchivo = "analisis_fci_procesado.xlsx";
 let ultimasFilasExcel = null;
+/** @type {"ARS" | "USD"} */
+let ultimaMonedaFci = "ARS";
 
 function fmtFecha(d) {
   if (d == null) return "—";
@@ -33,6 +35,60 @@ function parseNumLocal(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+function leerMonedaFci() {
+  const v = $("fciMonedaFondo")?.value;
+  return v === "USD" ? "USD" : "ARS";
+}
+
+/**
+ * Lotes iniciales y operaciones en USD → montos/PU en ARS (BNA por fecha operación / lote).
+ * Suscripción: tipo vendedor. Rescate: tipo comprador. Lote: tipo vendedor.
+ */
+async function convertirFciUsdAArs(lotesIniciales, operaciones) {
+  const set = new Set();
+  for (const o of operaciones) {
+    set.add(fechaIsoLocal(o.fecha));
+  }
+  for (const l of lotesIniciales) {
+    set.add(fechaIsoLocal(l.fecha));
+  }
+  const fechas = [...set];
+  if (fechas.length === 0) {
+    return { lotes: lotesIniciales, operaciones };
+  }
+  const mapa = await obtenerCotizacionesPorFechas(fechas);
+  const lotesN = lotesIniciales.map((l) => {
+    const iso = fechaIsoLocal(l.fecha);
+    const c = mapa.get(iso);
+    if (!c) {
+      throw new Error(
+        `No hay tipo de cambio BNA (vendedor) para la fecha del lote inicial (${iso}).`
+      );
+    }
+    return {
+      ...l,
+      valorUnitario: redondearA(l.valorUnitario * c.bnaVendedor, 6),
+    };
+  });
+  const opsN = operaciones.map((o) => {
+    const iso = fechaIsoLocal(o.fecha);
+    const c = mapa.get(iso);
+    if (!c) {
+      throw new Error(
+        `No hay tipo de cambio BNA para la operación con fecha ${iso} (fila en Excel con esa fecha).`
+      );
+    }
+    const mult = o.tipo === "suscripcion" ? c.bnaVendedor : c.bnaComprador;
+    return { ...o, monto: redondearA(o.monto * mult, 2) };
+  });
+  return { lotes: lotesN, operaciones: opsN };
+}
+
+function actualizarHintMonedaFci() {
+  const h = $("fciMonedaHint");
+  if (h) h.hidden = leerMonedaFci() !== "USD";
+}
+
 function crearFilaLoteInicial() {
   const wrap = document.createElement("div");
   wrap.className = "lote-inicial-row";
@@ -46,7 +102,7 @@ function crearFilaLoteInicial() {
       <input type="number" data-field="cuotas" inputmode="decimal" min="0" step="any" placeholder="0" />
     </div>
     <div class="field">
-      <label>Valor unitario ($)</label>
+      <label>Valor unitario (moneda del selector «Archivo»)</label>
       <input type="number" data-field="vu" inputmode="decimal" min="0" step="any" placeholder="0" />
     </div>
     <div class="lote-remove-wrap">
@@ -137,94 +193,28 @@ function leerExcelDesdeBuffer(data) {
   }));
 }
 
-function exportarExcel(resultado, operacionesOriginales) {
+function exportarExcel() {
+  if (!ultimoResultado) return;
   const XLSX = window.XLSX;
-  const resumen = [
-    ["Análisis de FCI — PEPS (FIFO)"],
-    [],
-    ["Resultado del ejercicio", fmtContabilidad(resultado.resultadoEjercicio, 2)],
-    ["Cuotas parte al cierre", fmtContabilidad(resultado.cuotasCierre, 6)],
-    [
-      "Valor unitario al cierre (costo PEPS)",
-      fmtContabilidad(resultado.valorUnitarioCierre, 6),
-    ],
-    ["Costo remanente en cartera", celdaMontoExcel(resultado.costoRemanente, 2)],
-    [],
-  ];
-
-  const cabDetalle = [
-    "Fecha",
-    "Tipo",
-    "Cuotas parte",
-    "Monto",
-    "Costo PEPS asignado",
-    "Resultado parcial",
-    "Saldo cuotas parte (lote)",
-  ];
-  const det = resultado.detallePepsPorLote || [];
-  const filasDet = det.map((d) => [
-    fmtFecha(d.fecha),
-    d.tipo,
-    celdaCantidadExcel(d.cuotasParte),
-    celdaMontoExcel(d.monto, 2),
-    celdaMontoExcel(d.costoPeps, 2),
-    celdaMontoExcel(d.resultadoParcial, 2),
-    celdaCantidadExcel(d.saldoCuotasParte),
-  ]);
-
-  const cabOps = ["Fecha", "Tipo", "Cuotas", "Monto"];
-  const filasOps = operacionesOriginales.map((o) => [
-    fmtFecha(o.fecha),
-    o.tipo === "suscripcion" ? "Suscripción" : "Rescate",
-    celdaCantidadExcel(o.cuotas),
-    celdaMontoExcel(o.monto, 2),
-  ]);
-
-  const pend = resultado.lotesPendientes || [];
-  const cabPend = [
-    "Fecha suscripción / lote",
-    "Cuotas parte restantes",
-    "Valor unitario (PEPS)",
-    "Costo remanente",
-    "Origen",
-  ];
-  const filasPend = pend.map((p) => [
-    fmtFecha(p.fecha),
-    celdaCantidadExcel(p.cuotasParte),
-    celdaMontoExcel(p.valorUnitario, 2),
-    celdaMontoExcel(p.costoRemanente, 2),
-    p.origen === "inicial" ? "Lote inicial" : "Suscripción (Excel)",
-  ]);
-
-  const notaPend = [
-    [],
-    [
-      "Usá estas filas como lotes iniciales en el próximo análisis (mismo orden: primero = más antiguo en PEPS).",
-    ],
-  ];
-
-  const wsRes = XLSX.utils.aoa_to_sheet(resumen);
-  const wsDet = XLSX.utils.aoa_to_sheet([cabDetalle, ...filasDet]);
-  const wsOps = XLSX.utils.aoa_to_sheet([cabOps, ...filasOps]);
-  const wsPend = XLSX.utils.aoa_to_sheet([
-    ["Lotes pendientes sin rescatar (saldo al cierre)"],
-    [],
-    cabPend,
-    ...filasPend,
-    ...notaPend,
-  ]);
-
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, wsRes, "Resumen");
-  XLSX.utils.book_append_sheet(wb, wsDet, "Detalle PEPS");
-  XLSX.utils.book_append_sheet(wb, wsPend, "Lotes pendientes");
-  XLSX.utils.book_append_sheet(wb, wsOps, "Operaciones");
-
-  XLSX.writeFile(wb, ultimoNombreArchivo.replace(/\.[^.]+$/, "") + "_procesado.xlsx");
+  if (!XLSX) {
+    mostrarError("No se cargó la librería XLSX.");
+    return;
+  }
+  const mon = ultimoResultado.monedaFci ?? leerMonedaFci();
+  generarWorkbookFciProcesado({
+    XLSX,
+    resultado: ultimoResultado.resultado,
+    operaciones: ultimoResultado.operaciones,
+    nombreBase: ultimoNombreArchivo,
+    monedaFci: mon,
+  });
 }
 
-function ejecutarAnalisis(filasExcel) {
+async function ejecutarAnalisis(filasExcel) {
   mostrarError("");
+
+  const monedaFci = leerMonedaFci();
+  ultimaMonedaFci = monedaFci;
 
   let lotesIniciales;
   try {
@@ -251,6 +241,25 @@ function ejecutarAnalisis(filasExcel) {
 
   ultimasFilasExcel = filasExcel;
 
+  if (monedaFci === "USD") {
+    mostrarError("Obteniendo cotizaciones BNA (dólares)…");
+    const btnE = $("btnExportar");
+    const prev = btnE?.disabled;
+    if (btnE) btnE.disabled = true;
+    try {
+      const conv = await convertirFciUsdAArs(lotesIniciales, operaciones);
+      lotesIniciales = conv.lotes;
+      operaciones = conv.operaciones;
+    } catch (e) {
+      mostrarError(e.message || String(e));
+      $("panelResultados").hidden = true;
+      if (btnE) btnE.disabled = prev;
+      return;
+    }
+    mostrarError("");
+    if (btnE) btnE.disabled = false;
+  }
+
   let resultado;
   try {
     resultado = procesarPEPS({ lotesIniciales }, operaciones);
@@ -260,7 +269,7 @@ function ejecutarAnalisis(filasExcel) {
     return;
   }
 
-  ultimoResultado = { resultado, operaciones };
+  ultimoResultado = { resultado, operaciones, monedaFci };
 
   $("resEjercicio").textContent = fmtContabilidad(resultado.resultadoEjercicio, 2);
   $("resEjercicio").className =
@@ -287,7 +296,7 @@ $("fileInput").addEventListener("change", async (ev) => {
   try {
     const buf = await file.arrayBuffer();
     const filas = leerExcelDesdeBuffer(buf);
-    ejecutarAnalisis(filas);
+    await ejecutarAnalisis(filas);
   } catch (e) {
     mostrarError(e.message || String(e));
     $("panelResultados").hidden = true;
@@ -297,11 +306,18 @@ $("fileInput").addEventListener("change", async (ev) => {
 
 $("btnExportar").addEventListener("click", () => {
   if (!ultimoResultado) return;
-  exportarExcel(ultimoResultado.resultado, ultimoResultado.operaciones);
+  exportarExcel();
 });
 
 $("btnAgregarLoteInicial").addEventListener("click", () => {
   agregarFilaLoteInicial();
+});
+
+$("fciMonedaFondo")?.addEventListener("change", () => {
+  actualizarHintMonedaFci();
+  if (ultimasFilasExcel != null) {
+    void reintentarSiHayDatos();
+  }
 });
 
 $("lotesInicialesContainer").addEventListener("click", (ev) => {
@@ -320,10 +336,11 @@ $("lotesInicialesContainer").addEventListener("click", (ev) => {
 
 $("lotesInicialesContainer").addEventListener("change", reintentarSiHayDatos);
 
-function reintentarSiHayDatos() {
+async function reintentarSiHayDatos() {
   if (ultimasFilasExcel != null) {
-    ejecutarAnalisis(ultimasFilasExcel);
+    await ejecutarAnalisis(ultimasFilasExcel);
   }
 }
 
 initLotesIniciales();
+actualizarHintMonedaFci();
