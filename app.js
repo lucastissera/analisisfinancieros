@@ -183,14 +183,20 @@ function leerExcelDesdeBuffer(data) {
     defval: "",
     raw: false,
   });
-  if (!all.length) return [];
+  if (!all.length) return { headers: [], rows: [] };
+
+  const rawHeaders = all[0].map((h) => String(h ?? "").trim());
   const dataRows = all.slice(1);
-  return dataRows.map((row) => ({
-    A: row[0],
-    B: row[1],
-    C: row[2],
-    D: row[3],
-  }));
+  const headersVacios = rawHeaders.every((h) => h === "");
+  const maxCol = Math.max(
+    rawHeaders.length,
+    ...dataRows.map((r) => (Array.isArray(r) ? r.length : 0)),
+    4
+  );
+  const headers = headersVacios
+    ? Array.from({ length: maxCol }, (_, i) => `__col${i + 1}`)
+    : rawHeaders;
+  return { headers, rows: dataRows };
 }
 
 function exportarExcel() {
@@ -275,7 +281,7 @@ async function ejecutarAnalisis(filasExcel) {
   $("resEjercicio").className =
     resultado.resultadoEjercicio >= 0 ? "valor ok" : "valor loss";
 
-  $("resCuotas").textContent = fmtContabilidad(resultado.cuotasCierre, 6);
+  $("resCuotas").textContent = fmtContabilidad(resultado.cuotasCierre, 5);
   $("resVU").textContent = fmtContabilidad(resultado.valorUnitarioCierre, 6);
 
   $("panelResultados").hidden = false;

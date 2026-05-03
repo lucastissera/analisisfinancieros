@@ -1,11 +1,14 @@
 /**
- * Exportación FCI: anchos, números con formato contable (2 dec / cuotas) y hoja "Rdo mensual".
+ * Exportación FCI: anchos y números con formato contabilidad (negativos entre paréntesis;
+ * montos 2 dec., cuotas 5 dec., VU 6 dec.) y hoja "Rdo mensual".
  */
 import { redondearA, redondearCuotasFci } from "./formato-contabilidad.js";
 
-const FMT_MONEY = "#,##0.00;(#,##0.00)";
-const FMT_CUOTAS = "0.000000";
-const FMT_VU = "0.000000";
+/** Contabilidad (miles al abrir según región Excel; negativos entre paréntesis). */
+const FMT_CONTABILIDAD_2 = "#,##0.00;(#,##0.00)";
+const FMT_CONTABILIDAD_5 = "#,##0.00000;(#,##0.00000)";
+const FMT_CONTABILIDAD_6 = "#,##0.000000;(#,##0.000000)";
+const FMT_CONTABILIDAD_ENT = "#,##0;(#,##0)";
 const FMT_DIA = "dd/mm/yyyy";
 
 /**
@@ -237,10 +240,10 @@ export function generarWorkbookFciProcesado({
 
   const fmtRes = (R, c) => {
     if (c !== 1) return null;
-    if (R === 3 || R === 6) return FMT_MONEY;
-    if (R === 4) return FMT_CUOTAS;
-    if (R === 5) return FMT_VU;
-    return FMT_MONEY;
+    if (R === 3 || R === 6) return FMT_CONTABILIDAD_2;
+    if (R === 4) return FMT_CONTABILIDAD_5;
+    if (R === 5) return FMT_CONTABILIDAD_6;
+    return FMT_CONTABILIDAD_2;
   };
   aplicarFormatoHoja(wb.Sheets["Resumen"], XLSX, 3, fmtRes);
 
@@ -251,8 +254,8 @@ export function generarWorkbookFciProcesado({
     (R, c) => {
       if (c === 0) return FMT_DIA;
       if (c === 1) return null;
-      if (c === 2 || c === 6) return FMT_CUOTAS;
-      return FMT_MONEY;
+      if (c === 2 || c === 6) return FMT_CONTABILIDAD_5;
+      return FMT_CONTABILIDAD_2;
     }
   );
 
@@ -260,7 +263,10 @@ export function generarWorkbookFciProcesado({
     wb.Sheets["Rdo mensual"],
     XLSX,
     1,
-    (R, c) => (c === 0 || c === 1 ? null : FMT_MONEY)
+    (R, c) => {
+      if (c === 0 || c === 1) return FMT_CONTABILIDAD_ENT;
+      return FMT_CONTABILIDAD_2;
+    }
   );
 
   aplicarFormatoHoja(
@@ -269,9 +275,9 @@ export function generarWorkbookFciProcesado({
     3,
     (R, c) => {
       if (c === 0) return FMT_DIA;
-      if (c === 1) return FMT_CUOTAS;
-      if (c === 2) return FMT_VU;
-      if (c === 3) return FMT_MONEY;
+      if (c === 1) return FMT_CONTABILIDAD_5;
+      if (c === 2) return FMT_CONTABILIDAD_6;
+      if (c === 3) return FMT_CONTABILIDAD_2;
       return null;
     }
   );
@@ -283,8 +289,8 @@ export function generarWorkbookFciProcesado({
     (R, c) => {
       if (c === 0) return FMT_DIA;
       if (c === 1) return null;
-      if (c === 2) return FMT_CUOTAS;
-      return FMT_MONEY;
+      if (c === 2) return FMT_CONTABILIDAD_5;
+      return FMT_CONTABILIDAD_2;
     }
   );
 

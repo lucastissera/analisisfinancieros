@@ -9,9 +9,12 @@ export function redondearA(n, dec) {
   return Math.round(n * f) / f;
 }
 
+/** Cuotas parte FCI: 5 decimales (redondeo estándar para PEPS). */
+export const DECIMALES_CUOTAS_FCI = 5;
+
 /** Redondeo estándar para cuotas FCI (evita error numérico en PEPS). */
 export function redondearCuotasFci(n) {
-  return redondearA(n, 8);
+  return redondearA(n, DECIMALES_CUOTAS_FCI);
 }
 
 /**

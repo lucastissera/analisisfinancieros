@@ -107,9 +107,12 @@
             </button>
           </div>
           <p class="hint">
-            Fila 1 del Excel: títulos. Columna A: fecha; B: suscripción o rescate;
-            C: cuotas (en rescates, si el valor es positivo se interpreta como
-            salida de cuotas); D: monto en pesos.
+            Fila 1 del Excel: encabezados (puede haber más columnas; el orden no
+            importa). Tiene que poder detectarse una columna de fecha, otra del tipo
+            de operación (suscripción o rescate) y otra de monto o importe. Si hay
+            columna de cuotapartes puede tener cualquier nombre reconocible
+            (p. ej. «Cuotaparte», «Cuotas»); si no, se usa el mismo valor que el
+            monto para el cómputo PEPS.
           </p>
         </section>
 

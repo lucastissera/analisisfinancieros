@@ -115,14 +115,13 @@ export function procesarPEPS(inicial, operaciones) {
         throw new Error(`Fila ${fila} (Excel): rescate con cuotas inválidas.`);
       }
 
-      const epsC = 1e-7;
-      let remaining = qtyToSell;
+      let remaining = redondearCuotasFci(qtyToSell);
 
-      while (redondearCuotasFci(remaining) > 1e-5 && lots.length > 0) {
+      while (redondearCuotasFci(remaining) > 0 && lots.length > 0) {
         const lot = lots[0];
         const take = redondearCuotasFci(Math.min(lot.qty, remaining));
         if (take <= 0) {
-          if (redondearCuotasFci(lot.qty) <= 1e-8) lots.shift();
+          if (redondearCuotasFci(lot.qty) <= 0) lots.shift();
           else break;
           continue;
         }
@@ -134,7 +133,7 @@ export function procesarPEPS(inicial, operaciones) {
 
         lot.qty = redondearCuotasFci(lot.qty - take);
         lot.totalCost = redondearA(lot.totalCost - costFromLot, 2);
-        const saldoLote = lot.qty < epsC ? 0 : lot.qty;
+        const saldoLote = redondearCuotasFci(lot.qty);
 
         if (!rescatesPorLote.has(lot.lotId)) rescatesPorLote.set(lot.lotId, []);
         rescatesPorLote.get(lot.lotId).push({
@@ -148,11 +147,11 @@ export function procesarPEPS(inicial, operaciones) {
         });
 
         remaining = redondearCuotasFci(remaining - take);
-        if (lot.qty < epsC) lots.shift();
+        if (redondearCuotasFci(lot.qty) <= 0) lots.shift();
       }
 
-      /* Tolerancia por redondeo de cuotas a 8 decimales y restas en cola PEPS. */
-      if (redondearCuotasFci(remaining) > 1e-4) {
+      /* Todo rescate debe agotarse en cuotas redondeadas a 5 decimales. */
+      if (redondearCuotasFci(remaining) > 0) {
         throw new Error(
           `Fila ${fila} (Excel): rescate de ${qtyToSell} cuotas supera las disponibles en cartera (PEPS).`
         );
@@ -168,7 +167,7 @@ export function procesarPEPS(inicial, operaciones) {
     2
   );
   const valorUnitarioCierre =
-    cuotasCierre > 1e-8 ? redondearA(costoCierre / cuotasCierre, 6) : 0;
+    cuotasCierre > 0 ? redondearA(costoCierre / cuotasCierre, 6) : 0;
 
   const detallePepsPorLote = construirDetallePepsPorLote(
     lotMetaById,
@@ -196,7 +195,7 @@ function construirLotesPendientes(lotsCola, lotMetaById) {
     const meta = lotMetaById.get(l.lotId);
     const q = redondearCuotasFci(l.qty);
     const tr = redondearA(l.totalCost, 2);
-    const vu = q > 1e-8 ? redondearA(tr / q, 6) : 0;
+    const vu = q > 0 ? redondearA(tr / q, 6) : 0;
     return {
       fecha: meta?.fecha ?? null,
       cuotasParte: q,
@@ -220,11 +219,11 @@ function construirDetallePepsPorLote(lotMetaById, rescatesPorLote) {
     filas.push({
       fecha: meta.fecha,
       tipo: esInicial ? "Lote inicial" : "Suscripción",
-      cuotasParte: meta.cuotasInicial,
+      cuotasParte: redondearCuotasFci(meta.cuotasInicial),
       monto: meta.costoInicial,
       costoPeps: meta.costoInicial,
       resultadoParcial: 0,
-      saldoCuotasParte: meta.cuotasInicial,
+      saldoCuotasParte: redondearCuotasFci(meta.cuotasInicial),
     });
 
     const chunks = rescatesPorLote.get(lotId);
@@ -237,15 +236,15 @@ function construirDetallePepsPorLote(lotMetaById, rescatesPorLote) {
     });
 
     for (const ch of chunks) {
-      filas.push({
-        fecha: ch.fecha,
-        tipo: "Rescate",
-        cuotasParte: ch.cuotasParte,
-        monto: ch.monto,
-        costoPeps: ch.costoPeps,
-        resultadoParcial: ch.resultadoParcial,
-        saldoCuotasParte: ch.saldoCuotasParte,
-      });
+    filas.push({
+      fecha: ch.fecha,
+      tipo: "Rescate",
+      cuotasParte: redondearCuotasFci(ch.cuotasParte),
+      monto: ch.monto,
+      costoPeps: ch.costoPeps,
+      resultadoParcial: ch.resultadoParcial,
+      saldoCuotasParte: redondearCuotasFci(ch.saldoCuotasParte),
+    });
     }
   }
 
@@ -253,7 +252,9 @@ function construirDetallePepsPorLote(lotMetaById, rescatesPorLote) {
 }
 
 /**
- * Convierte filas crudas del Excel (objeto por columna A,B,C,D) en operaciones ordenadas.
+ * Convierte filas del Excel en operaciones ordenadas.
+ * Requiere encabezados con columna fecha, operación/concepto y monto; cuotaparte es opcional
+ * (si no hay columna reconocida, se usa el monto como cantidad para PEPS).
  */
 function parseNumAR(v) {
   if (v === null || v === undefined) return null;
@@ -271,14 +272,151 @@ function parseNumAR(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-export function parsearFilasExcel(filas) {
+function normalizarEncabezado(s) {
+  return String(s ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ");
+}
+
+/**
+ * @param {string[]} headers
+ * @returns {{ fecha: number, tipo: number, monto: number, cuotas: number | null, cuotasOpcional: boolean, etiquetas: Record<string, string> }}
+ */
+export function resolverColumnasFci(headers) {
+  const hArr = Array.isArray(headers) ? headers : [];
+  const norm = hArr.map((h) => normalizarEncabezado(h));
+  const usado = new Set();
+
+  function primeraCoincidencia(patrones) {
+    for (const re of patrones) {
+      for (let i = 0; i < norm.length; i++) {
+        if (usado.has(i)) continue;
+        if (re.test(norm[i])) return i;
+      }
+    }
+    return null;
+  }
+
+  /* Cuotas antes que monto por si el título incluye "valor" ligado a cuotapartes. */
+  const idxCuotas = primeraCoincidencia([
+    /cuotapartes?/,
+    /cuotas?\s+parte/,
+    /cuota\s+parte/,
+    /^cuotas$/,
+    /cantidad\s+(de\s+)?cuotas/,
+    /nro\.?\s*cuotas/,
+    /^qty$/,
+    /^unidades$/,
+  ]);
+  if (idxCuotas != null) usado.add(idxCuotas);
+
+  const idxFecha = primeraCoincidencia([
+    /^fecha$/,
+    /^fecha\b/,
+    /fecha\s+(de\s+)?(oper|mov|liq|liquid)/,
+    /^f\.\s*oper/,
+    /^date$/,
+    /^fecha\s+valor$/,
+  ]);
+  if (idxFecha != null) usado.add(idxFecha);
+
+  const idxTipo = primeraCoincidencia([
+    /^operacion(es)?$/,
+    /^tipo$/,
+    /tipo\s+(de\s+)?oper/,
+    /^concepto$/,
+    /^movimiento$/,
+    /^descripcion$/,
+    /^detalle$/,
+    /^naturaleza$/,
+    /^type$/,
+  ]);
+  if (idxTipo != null) usado.add(idxTipo);
+
+  const idxMonto = primeraCoincidencia([
+    /\bimporte\b/,
+    /\bmonto\b/,
+    /\bpesos\b/,
+    /\bARS\b/i,
+    /^valor$/,
+    /\bneto\b/,
+    /total\s+(ARS|peso)/,
+  ]);
+  if (idxMonto != null) usado.add(idxMonto);
+
+  const soloPosicion =
+    norm.length > 0 &&
+    norm.every((n) => n === "" || /^__col\d+$/.test(n));
+
+  if (soloPosicion && norm.length >= 4) {
+    return {
+      fecha: 0,
+      tipo: 1,
+      cuotas: 2,
+      monto: 3,
+      cuotasOpcional: false,
+      etiquetas: {
+        fecha: String(headers[0] ?? "A"),
+        tipo: String(headers[1] ?? "B"),
+        cuotas: String(headers[2] ?? "C"),
+        monto: String(headers[3] ?? "D"),
+      },
+    };
+  }
+
+  const etiquetas = {
+    fecha: idxFecha != null ? String(headers[idxFecha] ?? "").trim() : "",
+    tipo: idxTipo != null ? String(headers[idxTipo] ?? "").trim() : "",
+    monto: idxMonto != null ? String(headers[idxMonto] ?? "").trim() : "",
+    cuotas:
+      idxCuotas != null ? String(headers[idxCuotas] ?? "").trim() : null,
+  };
+
+  return {
+    fecha: idxFecha,
+    tipo: idxTipo,
+    monto: idxMonto,
+    cuotas: idxCuotas,
+    cuotasOpcional: idxCuotas == null,
+    etiquetas,
+  };
+}
+
+/**
+ * @param {{ headers: string[], rows: any[][] }} tabla
+ */
+export function parsearFilasExcel(tabla) {
+  const { headers, rows } = tabla;
+  const filas = Array.isArray(rows) ? rows : [];
+  const mapa = resolverColumnasFci(headers);
+
+  if (mapa.fecha == null || mapa.tipo == null || mapa.monto == null) {
+    const titulos = (headers ?? [])
+      .map((h, i) => (String(h ?? "").trim() ? `"${h}"` : `(col ${i + 1})`))
+      .join(", ");
+    throw new Error(
+      "No se pudieron detectar columnas obligatorias (fecha, operación y monto). " +
+        `Encabezados en la fila 1: ${titulos || "(vacío)"}. ` +
+        "Usá títulos reconocibles, p. ej. Fecha, Operación o Concepto, Importe o Monto."
+    );
+  }
+
   const ops = [];
+  const tagFecha = mapa.etiquetas.fecha || "fecha";
+  const tagTipo = mapa.etiquetas.tipo || "operación";
+  const tagMonto = mapa.etiquetas.monto || "monto";
+  const tagCuotas = mapa.etiquetas.cuotas;
+
   for (let r = 0; r < filas.length; r++) {
     const row = filas[r];
-    const fechaRaw = row.A ?? row[0];
-    const tipoRaw = row.B ?? row[1];
-    const cuotasRaw = parseNumAR(row.C ?? row[2]);
-    const montoRaw = parseNumAR(row.D ?? row[3]);
+    const get = (ix) => (ix == null ? undefined : row?.[ix]);
+    const fechaRaw = get(mapa.fecha);
+    const tipoRaw = get(mapa.tipo);
+    const montoRaw = parseNumAR(get(mapa.monto));
+    const cuotasPars = parseNumAR(get(mapa.cuotas));
 
     if (
       fechaRaw === undefined ||
@@ -290,22 +428,36 @@ export function parsearFilasExcel(filas) {
 
     const tipo = normalizeTipo(tipoRaw);
     if (!tipo) {
-      throw new Error(`Fila ${r + 2}: tipo de operación no reconocido (columna B).`);
+      throw new Error(
+        `Fila ${r + 2}: tipo de operación no reconocido (columna «${tagTipo}»). ` +
+          "Tiene que indicarse suscripción o rescate."
+      );
     }
 
     const fecha = excelDateToDate(fechaRaw);
     if (!fecha || Number.isNaN(fecha.getTime())) {
-      throw new Error(`Fila ${r + 2}: fecha inválida (columna A).`);
-    }
-
-    const cuotasN = normalizeCuotas(tipo, cuotasRaw);
-    if (cuotasN == null || cuotasN <= 0) {
-      throw new Error(`Fila ${r + 2}: cantidad de cuotas inválida (columna C).`);
+      throw new Error(
+        `Fila ${r + 2}: fecha inválida (columna «${tagFecha}»).`
+      );
     }
 
     const montoN = normalizeMonto(montoRaw);
     if (montoN == null || montoN < 0) {
-      throw new Error(`Fila ${r + 2}: monto inválido (columna D).`);
+      throw new Error(
+        `Fila ${r + 2}: monto inválido (columna «${tagMonto}»).`
+      );
+    }
+
+    const baseCuotas =
+      cuotasPars != null && Number.isFinite(cuotasPars)
+        ? cuotasPars
+        : montoN;
+    const cuotasN = normalizeCuotas(tipo, baseCuotas);
+    if (cuotasN == null || cuotasN <= 0) {
+      const ref = tagCuotas ? `columna «${tagCuotas}»` : "monto (sin columna de cuotas)";
+      throw new Error(
+        `Fila ${r + 2}: cantidad de cuotas inválida (${ref}).`
+      );
     }
 
     const cuotasR = redondearCuotasFci(cuotasN);
