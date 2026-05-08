@@ -178,10 +178,13 @@ function leerExcelDesdeBuffer(data) {
   if (!name) throw new Error("El archivo no tiene hojas.");
 
   const ws = wb.Sheets[name];
+  /* raw: true — fechas y números nativos de la celda. raw:false devuelve
+   * strings según locale de Excel (p. ej. 3/28/25) y rompe el orden PEPS
+   * al parsearlos como D/M/Y. */
   const all = XLSX.utils.sheet_to_json(ws, {
     header: 1,
     defval: "",
-    raw: false,
+    raw: true,
   });
   if (!all.length) return { headers: [], rows: [] };
 

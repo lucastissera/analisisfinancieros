@@ -501,11 +501,28 @@ function excelDateToDate(v) {
   }
   const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
   if (m) {
-    let d = parseInt(m[1], 10);
-    let mo = parseInt(m[2], 10);
+    const a = parseInt(m[1], 10);
+    const b = parseInt(m[2], 10);
     let y = parseInt(m[3], 10);
     if (y < 100) y += 2000;
-    return new Date(y, mo - 1, d);
+    let day;
+    let mo;
+    if (a > 12) {
+      /* D/M/Y (p. ej. 28/3/25) */
+      day = a;
+      mo = b;
+    } else if (b > 12) {
+      /* M/D/Y — export habitual de Excel en inglés (p. ej. 3/28/25) */
+      mo = a;
+      day = b;
+    } else {
+      /* Ambiguo (p. ej. 4/1/25): convención Argentina día/mes/año */
+      day = a;
+      mo = b;
+    }
+    if (y >= 1900 && y <= 2100 && mo >= 1 && mo <= 12 && day >= 1 && day <= 31) {
+      return new Date(y, mo - 1, day);
+    }
   }
   const parsed = new Date(s);
   if (!Number.isNaN(parsed.getTime())) {
